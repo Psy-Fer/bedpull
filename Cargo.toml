@@ -1,0 +1,17 @@
+[package]
+name = "bedpull"
+version = "0.1.0"
+edition = "2024"
+authors = ["James M. Ferguson <j.ferguson@garvan.org.au>"]
+repository = "https://github.com/Psy-Fer/bedpull"
+description = "bedpull - Pull the query sequence from bam or fasta references using a bed file"
+keywords = ["bed", "bam", "bioinformatics"]
+license = "MIT"
+categories = ["bioinformatics"]
+
+[dependencies]
+clap = { version = "3.0", features = ["derive", "cargo", "wrap_help"] }
+noodles = {version = "0.66.0", features = ["core", "bam", "sam", "bed", "fasta", "fastq"]}
+bio = "1"
+itertools = "0.11"
+anyhow = "1.0"
