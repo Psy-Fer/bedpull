@@ -34,14 +34,14 @@ pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Re
         //                                             .map(|&score| (score + 33) as u8) // Adjust quality scores
         //                                             .collect::<Vec<_>>();
         // eprintln!("record.quality_scores: {:?}", record.quality_scores());
-        let i_qual = record.quality_scores().as_ref()
-                                    .iter()
-                                    .map(|&score| (score + 33) as u8) // Adjust quality scores
-                                    .collect::<Vec<_>>();
+        // let i_qual = record.quality_scores().as_ref()
+        //                             .iter()
+        //                             .map(|&score| (score + 33) as u8) // Adjust quality scores
+        //                             .collect::<Vec<_>>();
 
         // eprintln!("quality_scores adjusted: {:?}", i_qual);
         // now convert that to a String
-        let quality_scores_str: String = String::from_utf8_lossy(&i_qual).into_owned();
+        // let quality_scores_str: String = String::from_utf8_lossy(&i_qual).into_owned();
         let cigar = record.cigar();
         // Convert CIGAR operations to string by getting each kind, converting to a char, and going len|char and collecting
         // let cigar_string: String = cigar_to_string(&cigar);
@@ -67,14 +67,21 @@ pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Re
         // }
 
         // filter reads that don't map across the full region
-        if (align_end < usize::from(region.interval().end().unwrap())) | (align_start > usize::from(region.interval().start().unwrap())) {
+        let region_start = usize::from(region.interval().start().unwrap());
+        let region_end = usize::from(region.interval().end().unwrap());
+
+        // Skip reads that don't overlap
+        if (align_end < region_start) || (align_start > region_end) {
             eprintln!("{} Doesn't fit in region", name);
             eprintln!("A_start/start: {} / {}: {}", align_start, usize::from(region.interval().start().unwrap()), align_start as i64 - usize::from(region.interval().start().unwrap()) as i64);
             eprintln!("A_end/end: {} / {}: {}", align_end, usize::from(region.interval().end().unwrap()), align_end as i64 - usize::from(region.interval().end().unwrap()) as i64);
-            // counter -= 1;
             continue;
         }
-        let read_cuts: ReadCuts = get_read_cuts(&cigar, align_start, align_end);
+        
+        eprintln!("A_start/start: {} / {}: {}", align_start, usize::from(region.interval().start().unwrap()), align_start as i64 - usize::from(region.interval().start().unwrap()) as i64);
+        eprintln!("A_end/end: {} / {}: {}", align_end, usize::from(region.interval().end().unwrap()), align_end as i64 - usize::from(region.interval().end().unwrap()) as i64);
+        let read_cuts: ReadCuts = get_read_cuts(&cigar, align_start, usize::from(region.interval().start().unwrap()), usize::from(region.interval().end().unwrap()));
+        eprintln!("read_cuts: {:?}", read_cuts);
         if read_cuts.read_end == 0 {
             eprintln!("{} read_cut end is zero", name);
             // counter -= 1;
@@ -83,7 +90,7 @@ pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Re
         eprintln!("----------------------------------------------------------");
         eprintln!("read_cuts: {:?}", read_cuts);
         let subseq = i_seq[read_cuts.read_start..read_cuts.read_end].to_vec();
-        let subqual: String = quality_scores_str[read_cuts.read_start..read_cuts.read_end].to_string();
+        // let subqual: String = quality_scores_str[read_cuts.read_start..read_cuts.read_end].to_string();
         let subseq_str = String::from_utf8(subseq.to_vec()).expect("unexpected utf8 in sequence");
         // let subqual_str: String = String::from_utf8_lossy(&subqual).into_owned();
         let subseq_align_span: isize = (read_cuts.ref_end as isize).saturating_sub(read_cuts.ref_start as isize);
@@ -95,7 +102,7 @@ pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Re
             None => eprintln!("Tag not found"),
         }
         match hap {
-            0 => h0_subseq_vec.push((name, subseq.clone(), subqual.clone(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
+            0 => h0_subseq_vec.push((name, subseq.clone(), ".".to_string(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
             // 2 => h2_subseq_vec.push((name, subseq.clone(), subqual.clone(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
             // 1 => h1_subseq_vec.push((name, subseq.clone(), subqual.clone(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
             _ => eprintln!("More than 3 hap groups detected. BladeRunner currently does not support more than diploid")
@@ -113,7 +120,7 @@ pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Re
         // eprintln!("cigar: {:?}", cigar_string);
         eprintln!("subseq len: {}", subseq.len());
         eprintln!("subseq: {:?}", subseq_str);
-        eprintln!("subqual: {:?}", subqual);
+        // eprintln!("subqual: {:?}", subqual);
         // eprintln!("all quality_scores_str: {:?}", quality_scores_str);
         // eprintln!("data: {:?}", data);
         eprintln!("HP tag: {:?}", hap);

@@ -48,118 +48,93 @@ pub struct ReadCuts {
 /// This can be used to cut out a substring of the read sequence matching the target region
 /// Assumes read has full coverage of region
 /// TODO: Allow for partial overlaps with flags.
-pub fn get_read_cuts(cigar: &Cigar, align_start: usize, align_end: usize) -> ReadCuts {
-    let mut start: usize = 0; // start position of the cut relative to the read
+pub fn get_read_cuts(cigar: &Cigar, align_start: usize,region_start: usize, region_end: usize) -> ReadCuts {
+    let mut start: usize = 0;
     let mut end: usize = 0;
-    let mut r_start: usize = 0; // reference position relative to the chr, built along the way
+    let mut r_start: usize = 0;
     let mut r_end: usize = 0;
     let mut pos: usize = 0;
-    let mut ref_pos: usize = align_start; // the reference position in the chr
-    let ref_start: usize;
-    let ref_end: usize;
+    let mut ref_pos: usize = align_start;
+    
+    let ref_start = region_start;
+    let ref_end = region_end;
 
-    // Set ref_start/ref_end based on padding or set to align start/end
-    // as this will either be the original region_start/end or somewhere between
- 
-    ref_start = align_start;
-    ref_end = align_end;
- 
-
-    // we use a shortcut method before doing a forloop every op
-    // more code, but better performance
     for op in cigar.iter() {
         let op = op.expect("op code didn't work");
         match op.kind() {
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
-                // we increase both pos and ref
-                if (ref_pos + op.len() >= ref_start) | (ref_pos + op.len() >= ref_end) {
-                    if (ref_pos + op.len() == ref_start) | (ref_pos + op.len() == ref_end) {
+                if (ref_pos + op.len() >= ref_start) || (ref_pos + op.len() >= ref_end) {
+                    if (ref_pos + op.len() == ref_start) || (ref_pos + op.len() == ref_end) {
                         ref_pos += op.len();
                         pos += op.len();
                         if start > 0 {
                             end = pos;
                             r_end = ref_pos;
-                            // eprintln!("broke on match");
                             break;
-                        }
-                        else {
+                        } else {
                             start = pos;
                             r_start = ref_pos;
                         }
-                    }
-                    else {
+                    } else {
                         for _ in 0..op.len() {
                             ref_pos += 1;
                             pos += 1;
-                            if (ref_pos == ref_start) | (ref_pos == ref_end) {
+                            if (ref_pos == ref_start) || (ref_pos == ref_end) {
                                 if start > 0 {
                                     end = pos;
                                     r_end = ref_pos;
-                                    // eprintln!("broke on match");
                                     break;
-                                }
-                                else {
+                                } else {
                                     start = pos;
                                     r_start = ref_pos;
                                 }
                             }
                         }
                     }
-                }
-                else {
+                } else {
                     ref_pos += op.len();
                     pos += op.len();
                 }
             },
-            Kind::Insertion | Kind::SoftClip=> {
-                // we increase only pos, so can't hit region limits
+            Kind::Insertion | Kind::SoftClip => {
                 pos += op.len();
             }
-            Kind::Deletion |  Kind::Skip => {
-                // we increase only ref, so need to check for limits
-                if (ref_pos + op.len() >= ref_start) | (ref_pos + op.len() >= ref_end) {
-                    if (ref_pos + op.len() == ref_start) | (ref_pos + op.len() == ref_end) {
+            Kind::Deletion | Kind::Skip => {
+                if (ref_pos + op.len() >= ref_start) || (ref_pos + op.len() >= ref_end) {
+                    if (ref_pos + op.len() == ref_start) || (ref_pos + op.len() == ref_end) {
                         ref_pos += op.len();
                         if start > 0 {
                             end = pos;
                             r_end = ref_pos;
-                            // eprintln!("broke on deletion");
                             break;
-                        }
-                        else {
+                        } else {
                             start = pos;
                             r_start = ref_pos;
                         }
-                    }
-                    else {
+                    } else {
                         for _ in 0..op.len() {
                             ref_pos += 1;
-                            // pos += 1;
-                            if (ref_pos == ref_start) | (ref_pos == ref_end) {
+                            if (ref_pos == ref_start) || (ref_pos == ref_end) {
                                 if start > 0 {
                                     end = pos;
                                     r_end = ref_pos;
-                                    // eprintln!("broke on deletion");
                                     break;
-                                }
-                                else {
+                                } else {
                                     start = pos;
                                     r_start = ref_pos;
                                 }
                             }
                         }
                     }
-                }
-                else {
+                } else {
                     ref_pos += op.len();
                 }
             },
-            Kind::HardClip | Kind::Pad=> {continue;},
+            Kind::HardClip | Kind::Pad => {continue;},
         }
     }
     
     ReadCuts { read_start: start, read_end: end, ref_start: r_start, ref_end: r_end }
-
 }
 
 

@@ -69,9 +69,11 @@ fn main() -> Result<()>{
         eprintln!("No reads found for region in bam file. Skipping region: {}", region_name);
         continue;
     }
+    let region_start = usize::from(region.interval().start().unwrap());
+    let region_end = usize::from(region.interval().end().unwrap());
     // write to fasta or fastq
     for (name, subseq, _subqual, _ref_start, _ref_end) in overlapping_reads {
-        let head = format!("{}|{}:{:?}-{:?}|{}", name, chr, region.start(), region.end(), region_name);
+        let head = format!("{}|{}:{:?}-{:?}|{}", name, chr, region_start, region_end, region_name);
         write_fasta_record(&mut read_writer, &head, str::from_utf8(&subseq.to_vec()).expect("unexpected utf8 in sequence")).expect("Couldn't write fasta record")
     }
     // if consensus: generate consensus
