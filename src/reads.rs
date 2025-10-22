@@ -6,8 +6,9 @@ use noodles::sam::alignment::Record;
 use crate::cli::Opts;
 
 use crate::utils::{get_read_cuts, ReadCuts};
+pub use crate::cigar::ToCigarOps;
 
-
+// For bam reading
 pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Region) -> Vec<(String, Vec<u8>, String, usize, usize)>{
 
     let mut h0_subseq_vec: Vec<(String, Vec<u8>, String, usize, usize)> = vec![]; // no hap assigned
@@ -42,7 +43,7 @@ pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Re
         // eprintln!("quality_scores adjusted: {:?}", i_qual);
         // now convert that to a String
         // let quality_scores_str: String = String::from_utf8_lossy(&i_qual).into_owned();
-        let cigar = record.cigar();
+        let cigar = record.cigar().to_cigar_ops();
         // Convert CIGAR operations to string by getting each kind, converting to a char, and going len|char and collecting
         // let cigar_string: String = cigar_to_string(&cigar);
         // get start and end position in read sequence coordinates using cigar string
@@ -77,7 +78,7 @@ pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Re
             eprintln!("A_end/end: {} / {}: {}", align_end, usize::from(region.interval().end().unwrap()), align_end as i64 - usize::from(region.interval().end().unwrap()) as i64);
             continue;
         }
-        
+
         eprintln!("A_start/start: {} / {}: {}", align_start, usize::from(region.interval().start().unwrap()), align_start as i64 - usize::from(region.interval().start().unwrap()) as i64);
         eprintln!("A_end/end: {} / {}: {}", align_end, usize::from(region.interval().end().unwrap()), align_end as i64 - usize::from(region.interval().end().unwrap()) as i64);
         let read_cuts: ReadCuts = get_read_cuts(&cigar, align_start, usize::from(region.interval().start().unwrap()), usize::from(region.interval().end().unwrap()));

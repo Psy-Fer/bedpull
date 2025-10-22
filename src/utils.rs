@@ -2,7 +2,6 @@ use std::f64;
 use anyhow::Result;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use noodles::bam::record::Cigar;
 use noodles::sam::alignment::record::cigar::op::Kind;
 use bio::alignment::poa::Aligner as poAligner;
 use bio::alignment::pairwise::Scoring;
@@ -11,6 +10,7 @@ use noodles::core::{Region, region::Interval, Position};
 
 use crate::bed::BedReader;
 use crate::cli::Opts;
+use crate::cigar::CigarOps;
 
 
 /// Calculate the mean Qscore from a Qstring.
@@ -48,7 +48,7 @@ pub struct ReadCuts {
 /// This can be used to cut out a substring of the read sequence matching the target region
 /// Assumes read has full coverage of region
 /// TODO: Allow for partial overlaps with flags.
-pub fn get_read_cuts(cigar: &Cigar, align_start: usize,region_start: usize, region_end: usize) -> ReadCuts {
+pub fn get_read_cuts(cigar_ops: &CigarOps, align_start: usize,region_start: usize, region_end: usize) -> ReadCuts {
     let mut start: usize = 0;
     let mut end: usize = 0;
     let mut r_start: usize = 0;
@@ -59,14 +59,14 @@ pub fn get_read_cuts(cigar: &Cigar, align_start: usize,region_start: usize, regi
     let ref_start = region_start;
     let ref_end = region_end;
 
-    for op in cigar.iter() {
-        let op = op.expect("op code didn't work");
-        match op.kind() {
+    for op in cigar_ops {
+        // let op = op.expect("op code didn't work");
+        match op.kind {
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
-                if (ref_pos + op.len() >= ref_start) || (ref_pos + op.len() >= ref_end) {
-                    if (ref_pos + op.len() == ref_start) || (ref_pos + op.len() == ref_end) {
-                        ref_pos += op.len();
-                        pos += op.len();
+                if (ref_pos + op.len >= ref_start) || (ref_pos + op.len >= ref_end) {
+                    if (ref_pos + op.len == ref_start) || (ref_pos + op.len == ref_end) {
+                        ref_pos += op.len;
+                        pos += op.len;
                         if start > 0 {
                             end = pos;
                             r_end = ref_pos;
@@ -76,7 +76,7 @@ pub fn get_read_cuts(cigar: &Cigar, align_start: usize,region_start: usize, regi
                             r_start = ref_pos;
                         }
                     } else {
-                        for _ in 0..op.len() {
+                        for _ in 0..op.len {
                             ref_pos += 1;
                             pos += 1;
                             if (ref_pos == ref_start) || (ref_pos == ref_end) {
@@ -92,17 +92,17 @@ pub fn get_read_cuts(cigar: &Cigar, align_start: usize,region_start: usize, regi
                         }
                     }
                 } else {
-                    ref_pos += op.len();
-                    pos += op.len();
+                    ref_pos += op.len;
+                    pos += op.len;
                 }
             },
             Kind::Insertion | Kind::SoftClip => {
-                pos += op.len();
+                pos += op.len;
             }
             Kind::Deletion | Kind::Skip => {
-                if (ref_pos + op.len() >= ref_start) || (ref_pos + op.len() >= ref_end) {
-                    if (ref_pos + op.len() == ref_start) || (ref_pos + op.len() == ref_end) {
-                        ref_pos += op.len();
+                if (ref_pos + op.len >= ref_start) || (ref_pos + op.len >= ref_end) {
+                    if (ref_pos + op.len == ref_start) || (ref_pos + op.len == ref_end) {
+                        ref_pos += op.len;
                         if start > 0 {
                             end = pos;
                             r_end = ref_pos;
@@ -112,7 +112,7 @@ pub fn get_read_cuts(cigar: &Cigar, align_start: usize,region_start: usize, regi
                             r_start = ref_pos;
                         }
                     } else {
-                        for _ in 0..op.len() {
+                        for _ in 0..op.len {
                             ref_pos += 1;
                             if (ref_pos == ref_start) || (ref_pos == ref_end) {
                                 if start > 0 {
@@ -127,7 +127,7 @@ pub fn get_read_cuts(cigar: &Cigar, align_start: usize,region_start: usize, regi
                         }
                     }
                 } else {
-                    ref_pos += op.len();
+                    ref_pos += op.len;
                 }
             },
             Kind::HardClip | Kind::Pad => {continue;},

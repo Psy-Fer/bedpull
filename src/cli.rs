@@ -36,25 +36,25 @@ pub struct Opts {
     #[clap(short = 'o', long = "output", required=true, display_order = 4)]
     pub output: PathBuf,
 
-    /// Create a consensus sequence from extracted sequences for each region
-    #[clap(short = 'c', long = "consensus", display_order = 5)]
-    pub consensus: bool,
+    // /// Create a consensus sequence from extracted sequences for each region
+    // #[clap(short = 'c', long = "consensus", display_order = 5)]
+    // pub consensus: bool,
 
-    /// Consensus fasta file output
-    #[clap(long = "c_output", default_value = "consensus.bedpull.fasta", display_order = 5)]
-    pub c_output: PathBuf,
+    // /// Consensus fasta file output
+    // #[clap(long = "c_output", default_value = "consensus.bedpull.fasta", display_order = 5)]
+    // pub c_output: PathBuf,
 
-    /// Minimum number of reads in a haplotype group to build a consensus
-    #[clap(long = "min_read_count", default_value = "3", display_order = 6)]
-    pub min_read_count: usize,
+    // /// Minimum number of reads in a haplotype group to build a consensus
+    // #[clap(long = "min_read_count", default_value = "3", display_order = 6)]
+    // pub min_read_count: usize,
 
-    /// Split sequences based on haplotype tag HP
-    #[clap(short = 'h', long = "hap_split", display_order = 7)]
-    pub hap_split: bool,
+    // /// Split sequences based on haplotype tag HP
+    // #[clap(short = 'h', long = "hap_split", display_order = 7)]
+    // pub hap_split: bool,
     
-    /// Use 4th column of bed to add name to output
-    #[clap(short = 'n', long = "name", display_order = 8)]
-    pub name: bool,
+    // /// Use 4th column of bed to add name to output
+    // #[clap(short = 'n', long = "name", display_order = 8)]
+    // pub name: bool,
 
 }
 
@@ -88,10 +88,10 @@ pub fn check_inputs_exist(opts: &Opts) {
 }
 
 
-pub fn check_option_values(opts: &Opts) {
-    if opts.min_read_count < 1 {
-        quit_with_error("--min_read_count must be > 0")
-    }
+pub fn check_option_values(_opts: &Opts) {
+    // if opts.min_read_count < 1 {
+    //     quit_with_error("--min_read_count must be > 0")
+    // }
 }
 
 

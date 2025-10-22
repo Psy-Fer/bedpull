@@ -2,6 +2,7 @@ mod cli;
 mod utils;
 mod bed;
 mod reads;
+mod cigar;
 
 use std::fs::File;
 use std::io::BufWriter;
