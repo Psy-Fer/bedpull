@@ -188,7 +188,7 @@ pub fn write_fasta_record(writer: &mut BufWriter<File>, header: &str, sequence: 
 }
 
 // write a fastq record
-pub fn _write_fastq_record(writer: &mut BufWriter<File>, header: &str, sequence: &str, quality: &str) -> Result<()> {
+pub fn write_fastq_record(writer: &mut BufWriter<File>, header: &str, sequence: &str, quality: &str) -> Result<()> {
     writeln!(writer, "@{}", header)?;
     writeln!(writer, "{}", sequence)?;
     writeln!(writer, "+")?;

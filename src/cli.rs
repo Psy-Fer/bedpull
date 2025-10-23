@@ -66,7 +66,11 @@ pub struct Opts {
 
     /// Use paf index
     #[clap(long = "use_paf_index", default_value="true", display_order = 8)]
-    pub use_paf_index: bool
+    pub use_paf_index: bool,
+
+    /// write fastq (BAM only)
+    #[clap(long = "fastq", display_order = 8)]
+    pub fastq: bool,
 }
 
 fn quit_with_error(text: &str) {

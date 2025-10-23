@@ -23,6 +23,7 @@ use crate::paf::read_paf_record_at_offset;
 use crate::reads::ToCigarOps;
 use crate::utils::extract_from_fasta_coords;
 use crate::utils::get_read_cuts;
+use crate::utils::write_fastq_record;
 
 fn main() -> Result<()>{
     let opts: Opts = Opts::parse();
@@ -96,9 +97,14 @@ pub fn extract_from_bam(opts: &Opts, regions: Vec<(noodles::core::Region, String
         let region_start = usize::from(region.interval().start().unwrap());
         let region_end = usize::from(region.interval().end().unwrap());
         // write to fasta or fastq
-        for (name, subseq, _subqual, _ref_start, _ref_end) in overlapping_reads {
+        for (name, subseq, subqual, _ref_start, _ref_end) in overlapping_reads {
             let head = format!("{}|{}:{:?}-{:?}|{}", name, chr, region_start, region_end, region_name);
-            write_fasta_record(read_writer, &head, &std::str::from_utf8(&subseq).expect("unexpected utf8 in sequence")).expect("Couldn't write fasta record");
+            if opts.fastq {
+                write_fastq_record(read_writer, &head, &std::str::from_utf8(&subseq).expect("unexpected utf8 in sequence"), &subqual).expect("Couldn't write fastq record");
+            }
+            else {
+                write_fasta_record(read_writer, &head, &std::str::from_utf8(&subseq).expect("unexpected utf8 in sequence")).expect("Couldn't write fasta record");
+            }
         }
         // if consensus: generate consensus
         // write to consensus fasta (potential fastq using mean q score per base?)
@@ -171,7 +177,7 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
                 let sequence = extract_from_fasta_coords(query_ref, &paf_record.query_name, query_start, query_end).expect("couldn't extract fasta sequence");
                 
                 // Write fasta output
-                let header = format!(">{}|ref_{}:{}-{}|query_{}:{}-{}", 
+                let header = format!("{}|ref_{}:{}-{}|query_{}:{}-{}", 
                                                 paf_record.query_name,
                                                 region_name, 
                                                 region_start, 
