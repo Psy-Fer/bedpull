@@ -43,8 +43,8 @@ fn main() -> Result<()>{
     let mut read_writer: BufWriter<File> = BufWriter::new(output_file);
 
     // if reference input
-    eprintln!("Reference mode");
-    eprintln!("Extracting sequences");
+    // eprintln!("Reference mode");
+    // eprintln!("Extracting sequences");
     // for region in bed
     // cut out sequence
     // write to fasta
@@ -57,7 +57,7 @@ fn main() -> Result<()>{
     } 
     
     // if paf
-    else if opts.paf.to_str() != Some("None") &&  opts.query_ref.to_str() == Some("None"){
+    else if opts.paf.to_str() != Some("None") && opts.query_ref.to_str() != Some("None"){
         eprintln!("paf mode");
         eprintln!("Extracting sequences");
         extract_from_paf(&opts, regions, &mut read_writer);

@@ -165,11 +165,11 @@ pub fn read_bed(opts: &Opts,) -> Vec<(Region, String, String)> {
             Ok(record) => {
                 eprintln!("{:?}", record);
                 let chr: String = record.chrom.clone();
-                let start = Position::try_from(record.start).expect("Couldn't get start position");
-                let end = Position::try_from(record.end).expect("Couldn't get end position");
-                let interval = Interval::from(start..=end);
+                let start: Position = Position::try_from(record.start).expect("Couldn't get start position");
+                let end: Position = Position::try_from(record.end).expect("Couldn't get end position");
+                let interval: Interval = Interval::from(start..=end);
                 eprintln!("region: {:?}", Region::new(record.chrom.clone(), interval));
-                let name = record.name.unwrap_or(format!("{}:{}-{}", record.chrom, start, end));
+                let name: String = record.name.unwrap_or(format!("{}:{}-{}", record.chrom, start, end));
                 regions.push((Region::new(record.chrom, interval), name, chr));
             },
             Err(e) => eprintln!("Error: {}", e),
