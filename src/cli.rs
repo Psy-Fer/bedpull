@@ -32,6 +32,14 @@ pub struct Opts {
     #[clap(short = 'r', long = "bed", parse(from_os_str), required=true, display_order = 3)]
     pub bed: PathBuf,
 
+    /// paf file - ideally used for assembly to reference mapping
+    #[clap(long = "paf", parse(from_os_str), display_order = 3)]
+    pub paf: PathBuf,
+
+    /// query reference file (used with paf for extracting sequence)
+    #[clap(long = "query_ref", parse(from_os_str), display_order = 3)]
+    pub query_ref: PathBuf,
+
     /// Write a fasta or optionally fastq (bam required) file with extracted query sequences
     #[clap(short = 'o', long = "output", required=true, display_order = 4)]
     pub output: PathBuf,
@@ -56,6 +64,9 @@ pub struct Opts {
     // #[clap(short = 'n', long = "name", display_order = 8)]
     // pub name: bool,
 
+    /// Use paf index
+    #[clap(long = "use_paf_index", default_value="true", display_order = 8)]
+    pub use_paf_index: bool
 }
 
 fn quit_with_error(text: &str) {

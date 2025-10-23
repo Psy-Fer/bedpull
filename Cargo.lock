@@ -56,6 +56,7 @@ dependencies = [
  "anyhow",
  "bio",
  "clap",
+ "csv",
  "itertools",
  "noodles",
 ]

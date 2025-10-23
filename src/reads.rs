@@ -9,7 +9,7 @@ use crate::utils::{get_read_cuts, ReadCuts};
 pub use crate::cigar::ToCigarOps;
 
 // For bam reading
-pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Region) -> Vec<(String, Vec<u8>, String, usize, usize)>{
+pub fn get_bam_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Region) -> Vec<(String, Vec<u8>, String, usize, usize)>{
 
     let mut h0_subseq_vec: Vec<(String, Vec<u8>, String, usize, usize)> = vec![]; // no hap assigned
     
@@ -106,7 +106,7 @@ pub fn get_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Re
             0 => h0_subseq_vec.push((name, subseq.clone(), ".".to_string(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
             // 2 => h2_subseq_vec.push((name, subseq.clone(), subqual.clone(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
             // 1 => h1_subseq_vec.push((name, subseq.clone(), subqual.clone(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
-            _ => eprintln!("More than 3 hap groups detected. BladeRunner currently does not support more than diploid")
+            _ => eprintln!("More than 3 hap groups detected. bedpull currently does not support more than diploid")
         }
         
 
