@@ -98,7 +98,7 @@ pub fn extract_from_bam(opts: &Opts, regions: Vec<(noodles::core::Region, String
         // write to fasta or fastq
         for (name, subseq, _subqual, _ref_start, _ref_end) in overlapping_reads {
             let head = format!("{}|{}:{:?}-{:?}|{}", name, chr, region_start, region_end, region_name);
-            write_fasta_record(read_writer, &head, str::from_utf8(&subseq.to_vec()).expect("unexpected utf8 in sequence")).expect("Couldn't write fasta record")
+            write_fasta_record(read_writer, &head, &std::str::from_utf8(&subseq).expect("unexpected utf8 in sequence")).expect("Couldn't write fasta record");
         }
         // if consensus: generate consensus
         // write to consensus fasta (potential fastq using mean q score per base?)
