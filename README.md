@@ -91,11 +91,25 @@ bedpull --paf hg002pat_to_hs1.paf \
 Correctly extract sequences spanning large insertions or deletions:
 
 Example: RFC1 locus with 520bp insertion
+
+![IGV screenshto showing 520bp insertion at RFC1 locus](docs/img/image.png)
+
+Using liftover to get regions
+
 ```
-Reference (hs1):     chr4:39318077-39318136 (59 bp)
-HG002 paternal:      chr4_PATERNAL:39438031-39438610 (579 bp)
-Insertion captured:  520 bp
+liftOver ./rfc1.bed hg002pat_to_hs1.chain hg002_paternal_regions_rfc1.bed unmapped_pat_rfc1.bed
 ```
+
+
+Results:
+```
+Reference (hs1):               chr4:39318077-39318136 (59 bp)
+HG002 paternal (liftover):     chr4_PATERNAL:39438551-39438610 (59bp)
+HG002 paternal (bedpull):      chr4_PATERNAL:39438031-39438610 (579 bp)
+Insertion captured by bedpull:  520 bp
+```
+
+liftover misses the 520bp insertion, but bedpull picks it up
 
 ### Phased Assembly Comparison
 Extract similar regions from maternal and paternal haplotypes:
