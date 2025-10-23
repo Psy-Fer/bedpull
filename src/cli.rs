@@ -33,11 +33,11 @@ pub struct Opts {
     pub bed: PathBuf,
 
     /// paf file - ideally used for assembly to reference mapping
-    #[clap(long = "paf", parse(from_os_str), display_order = 3)]
+    #[clap(long = "paf", parse(from_os_str), default_value = "None", display_order = 3)]
     pub paf: PathBuf,
 
     /// query reference file (used with paf for extracting sequence)
-    #[clap(long = "query_ref", parse(from_os_str), display_order = 3)]
+    #[clap(long = "query_ref", parse(from_os_str), default_value = "None", display_order = 3)]
     pub query_ref: PathBuf,
 
     /// Write a fasta or optionally fastq (bam required) file with extracted query sequences

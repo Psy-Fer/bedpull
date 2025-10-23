@@ -23,7 +23,7 @@ pub fn get_bam_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region:
         // TODO: can filter on this using arg
         // let map_quality = u8::from(record.mapping_quality().unwrap());
         // let flags = record.flags();
-        let data = record.data();
+        // let data = record.data();
         // let span: usize = record.alignment_span().unwrap().expect("couldn't get alignment span");
         let align_end = usize::from(record.alignment_end().unwrap().expect("couldn't get alignment end"));
         // turn this to bytes, then a vec, then convert to string from utf8
@@ -91,18 +91,19 @@ pub fn get_bam_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region:
         // let subqual_str: String = String::from_utf8_lossy(&subqual).into_owned();
         // let subseq_align_span: isize = (read_cuts.ref_end as isize).saturating_sub(read_cuts.ref_start as isize);
         // eprintln!("name: {:?}", name);
-        let mut hap: u8 = 0;
-        match data.get(b"HP") {
-            Some(Ok(value)) => hap = value.as_int().unwrap() as u8,
-            Some(Err(e)) => eprintln!("Error occurred: {}", e),
-            None => eprintln!("Tag not found"),
-        }
-        match hap {
-            0 => h0_subseq_vec.push((name, subseq.clone(), subqual, read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
-            // 2 => h2_subseq_vec.push((name, subseq.clone(), subqual.clone(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
-            // 1 => h1_subseq_vec.push((name, subseq.clone(), subqual.clone(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
-            _ => eprintln!("multiple haplotypes detected. bedpull currently does not support phased data")
-        }
+        // let mut hap: u8 = 0;
+        // match data.get(b"HP") {
+        //     Some(Ok(value)) => hap = value.as_int().unwrap() as u8,
+        //     Some(Err(e)) => eprintln!("Error occurred: {}", e),
+        //     None => eprintln!("Tag not found"),
+        // }
+        h0_subseq_vec.push((name, subseq.clone(), subqual, read_cuts.ref_start.clone(), read_cuts.ref_end.clone()));
+        // match hap {
+        //     0 => h0_subseq_vec.push((name, subseq.clone(), subqual, read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
+        //     // 2 => h2_subseq_vec.push((name, subseq.clone(), subqual.clone(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
+        //     // 1 => h1_subseq_vec.push((name, subseq.clone(), subqual.clone(), read_cuts.ref_start.clone(), read_cuts.ref_end.clone())),
+        //     _ => eprintln!("multiple haplotypes detected. bedpull currently does not support phased data")
+        // }
         
 
         // eprintln!("ref_id: {}", ref_id);
