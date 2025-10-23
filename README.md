@@ -14,6 +14,13 @@ Extract sequences from BAM, PAF, or FASTA files using BED coordinates. A fast, r
 
 ## Installation
 
+### Installing Rust if you don't have it yet
+
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source $HOME/.cargo/env
+```
+
 ### From source
 ```bash
 git clone https://github.com/Psy-Fer/bedpull
@@ -22,7 +29,19 @@ cargo build --release
 ./target/release/bedpull --help
 ```
 
-Add /<top dir>/bedpull/target/release/ to your `$PATH` for easy use of the `bedpull` binary
+Add `/<top dir>/bedpull/target/release/` to your `$PATH` for easy use of the `bedpull` binary
+
+
+### building a static binary if you need to run on some other linux system like NCI
+
+```
+rustup target add x86_64-unknown-linux-musl
+RUSTFLAGS='-C link-arg=-s'
+cargo build --release --target x86_64-unknown-linux-musl
+./target/x86_64-unknown-linux-musl/release/bedpull --help
+```
+
+You can then copy that binary across and use it.
 
 ### Requirements
 - Rust 1.70 or higher
