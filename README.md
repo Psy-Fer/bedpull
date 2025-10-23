@@ -11,20 +11,6 @@ Extract sequences from BAM, PAF, or FASTA files using BED coordinates. A fast, r
 - Complex rearrangements
 - Phased haplotype assemblies (coming soon!)
 
-## TODO
-
-- map quality filtering
-- fastq mean qscore filtering (for the subqual string)
-- secondary and sup alignment handling
-- phased haplotype handling
-- make a consensus from reads of same region/haplotype
-- minimum number of reads to use for consensus building
-- reorganisation of some functions to house similar things together (paf and bam are a shambles)
-- better handle 4th column in bed file for naming
-- rethink header structure, make some standard spec for it across all outputs
-- add threading for very large bams/pafs
-- add more checks for files, write permissions, arg combination limits (like --fastq only with --bam), etc
-- add some example files for people to test/play with
 
 ## Installation
 
@@ -205,6 +191,22 @@ samtools faidx assembly.fasta
 >query_name|ref_region:start-end|query_region:start-end
 >chr4_PATERNAL|ref_RFC1:39318077-39318136|query_chr4_PATERNAL:39438031-39438610
 ```
+
+## TODO
+
+- map quality filtering
+- fastq mean qscore filtering (for the subqual string)
+- secondary and sup alignment handling
+- phased haplotype handling
+- make a consensus from reads of same region/haplotype
+- minimum number of reads to use for consensus building
+- reorganisation of some functions to house similar things together (paf and bam are a shambles)
+- better handle 4th column in bed file for naming
+- rethink header structure, make some standard spec for it across all outputs
+- add threading for very large bams/pafs
+- add more checks for files, write permissions, arg combination limits (like --fastq only with --bam), etc
+- add some example files for people to test/play with
+
 
 ## Citation
 
