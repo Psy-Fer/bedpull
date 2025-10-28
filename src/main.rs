@@ -15,7 +15,6 @@ use clap::Parser;
 use noodles::bam;
 
 use cli::Opts;
-use noodles::core::region;
 use reads::get_bam_reads;
 use utils::{read_bed, write_fasta_record};
 use paf::PafIndex;
@@ -147,16 +146,8 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
             continue;
         }
         
-        let mut region_start = usize::from(region.interval().start().unwrap());
-        let mut region_end = usize::from(region.interval().end().unwrap());
-
-        // flip region if inverted
-        if region_end < region_start {
-            eprintln!("region_end < region_start, flipping");
-            let re_bak = region_end;
-            region_end = region_start;
-            region_start = re_bak;
-        }
+        let region_start = usize::from(region.interval().start().unwrap());
+        let region_end = usize::from(region.interval().end().unwrap());
 
         // Query index for overlapping entries
         let overlapping_entries = index.query(chr, region_start, region_end);
@@ -166,6 +157,8 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
         // Read actual PAF records from file
         for entry in overlapping_entries {
             let paf_record = read_paf_record_at_offset(paf_path, entry.offset).unwrap();
+
+            eprintln!("paf_record: {:?}", paf_record);
             
             if let Some(cigar_str) = &paf_record.cigar {
                 // Convert CIGAR and calculate query coordinates
