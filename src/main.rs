@@ -158,17 +158,32 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
         for entry in overlapping_entries {
             let paf_record = read_paf_record_at_offset(paf_path, entry.offset).unwrap();
 
-            eprintln!("paf_record: {:?}", paf_record);
+            // eprintln!("paf_record: {:?}", paf_record);
+            // TODO: actually handle these as partial reads.
+            // check if alignment fully contains the region
+            if paf_record.target_start > region_start {
+                eprintln!("Warning: Alignment starts after region start, may be incomplete");
+            }
+            if paf_record.target_end < region_end {
+                eprintln!("Warning: Alignment ends before region end, may be incomplete");
+            }
             
             if let Some(cigar_str) = &paf_record.cigar {
                 // Convert CIGAR and calculate query coordinates
                 let cigar_ops = cigar_str.as_str().to_cigar_ops();
-                let cuts = get_read_cuts(
-                    &cigar_ops,
-                    paf_record.target_start,
-                    region_start,
-                    region_end,
-                );
+                let cuts = get_read_cuts(&cigar_ops, paf_record.target_start, region_start, region_end);
+                
+                // Validate cuts
+                if cuts.read_start == 0 && cuts.read_end == 0 {
+                    eprintln!("Warning: No valid overlap found, skipping");
+                    continue;
+                }
+                
+                if cuts.read_start >= cuts.read_end {
+                    eprintln!("Warning: Invalid coordinates (start {} >= end {}), skipping", 
+                        cuts.read_start, cuts.read_end);
+                    continue;
+                }
                 
                 // Calculate actual query coordinates
                 let query_start = paf_record.query_start + cuts.read_start;
