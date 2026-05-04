@@ -7,7 +7,7 @@ repository = "https://github.com/Psy-Fer/bedpull"
 description = "bedpull - Pull the query sequence from bam or fasta references using a bed file"
 keywords = ["bed", "bam", "bioinformatics"]
 license = "MIT"
-categories = ["bioinformatics"]
+categories = ["science", "command-line-utilities"]
 
 [dependencies]
 clap = { version = "3.0", features = ["derive", "cargo", "wrap_help"] }
