@@ -1,3 +1,4 @@
+use anyhow::{anyhow, bail, Context, Result};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::collections::HashMap;
@@ -24,32 +25,32 @@ pub struct PafRecord {
 }
 
 impl PafRecord {
-    pub fn from_line(line: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_line(line: &str) -> Result<Self> {
         let fields: Vec<&str> = line.split('\t').collect();
-        
+
         if fields.len() < 12 {
-            return Err("Invalid PAF line: too few fields".into());
+            bail!("invalid PAF line: too few fields (got {})", fields.len());
         }
-        
-        // Extract CIGAR from cg tag
+
+        // Extract CIGAR from cg tag ("cg:Z:" is 5 bytes)
         let cigar = fields.iter()
             .skip(12)
             .find(|f| f.starts_with("cg:Z:"))
-            .map(|f| f.strip_prefix("cg:Z:").unwrap().to_string());
-        
+            .map(|f| f[5..].to_string());
+
         Ok(PafRecord {
             query_name: fields[0].to_string(),
-            query_length: fields[1].parse()?,
-            query_start: fields[2].parse()?,
-            query_end: fields[3].parse()?,
-            strand: fields[4].chars().next().unwrap(),
+            query_length: fields[1].parse().context("invalid PAF query length")?,
+            query_start: fields[2].parse().context("invalid PAF query start")?,
+            query_end: fields[3].parse().context("invalid PAF query end")?,
+            strand: fields[4].chars().next().ok_or_else(|| anyhow!("PAF strand field is empty"))?,
             target_name: fields[5].to_string(),
-            target_length: fields[6].parse()?,
-            target_start: fields[7].parse()?,
-            target_end: fields[8].parse()?,
-            num_matches: fields[9].parse()?,
-            alignment_length: fields[10].parse()?,
-            mapping_quality: fields[11].parse()?,
+            target_length: fields[6].parse().context("invalid PAF target length")?,
+            target_start: fields[7].parse().context("invalid PAF target start")?,
+            target_end: fields[8].parse().context("invalid PAF target end")?,
+            num_matches: fields[9].parse().context("invalid PAF num matches")?,
+            alignment_length: fields[10].parse().context("invalid PAF alignment length")?,
+            mapping_quality: fields[11].parse().context("invalid PAF mapping quality")?,
             cigar,
         })
     }
@@ -83,7 +84,7 @@ impl PafIndex {
     }
     
     // Build index from PAF file
-    pub fn build(paf_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn build(paf_path: &str) -> Result<Self> {
         let file = File::open(paf_path)?;
         let mut reader = BufReader::new(file);
         let mut index = PafIndex::new();
@@ -127,7 +128,7 @@ impl PafIndex {
     }
     
     // Save index to file
-    pub fn save(&self, index_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save(&self, index_path: &str) -> Result<()> {
         let mut file = File::create(index_path)?;
         
         for (chrom, entries) in &self.entries {
@@ -141,7 +142,7 @@ impl PafIndex {
     }
     
     // Load index from file
-    pub fn load(index_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load(index_path: &str) -> Result<Self> {
         let file = File::open(index_path)?;
         let reader = BufReader::new(file);
         let mut index = PafIndex::new();
@@ -295,7 +296,7 @@ mod tests {
 }
 
 // get the paf record using an index offset
-pub fn read_paf_record_at_offset(paf_path: &str, offset: u64) -> Result<PafRecord, Box<dyn std::error::Error>> {
+pub fn read_paf_record_at_offset(paf_path: &str, offset: u64) -> Result<PafRecord> {
     let mut file = File::open(paf_path)?; // can I open this once and move the seek backwards?
     file.seek(SeekFrom::Start(offset))?;
     

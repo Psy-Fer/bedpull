@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use itertools::Itertools;
 use noodles::bam;
 use noodles::core::Region;
@@ -8,29 +9,29 @@ use crate::utils::{get_read_cuts, ReadCuts};
 pub use crate::cigar::ToCigarOps;
 
 // For bam reading
-pub fn get_bam_reads<R>(_opts: &Opts, query: bam::io::reader::Query<R>, region: &Region, lflank: usize, rflank: usize) -> Vec<(String, Vec<u8>, String, usize, usize)>
+pub fn get_bam_reads<R>(_opts: &Opts, query: bam::io::reader::Query<R>, region: &Region, lflank: usize, rflank: usize) -> Result<Vec<(String, Vec<u8>, String, usize, usize)>>
 where
     R: noodles::bgzf::io::BufRead + noodles::bgzf::io::Seek,
 {
 
     let mut h0_subseq_vec: Vec<(String, Vec<u8>, String, usize, usize)> = vec![]; // no hap assigned
-    
-    // let mut counter = 0;
+
     for result in query.records() {
-        // counter += 1;
-        let record = result.expect("Couldn't read result");
-        // let ref_id = record.reference_sequence_id().unwrap().expect("ref_id had an error");
-        // this is a 1-based position
-        let align_start = usize::from(record.alignment_start().unwrap().expect("Couldn't get align_start"));
-        // TODO: can filter on this using arg
-        // let map_quality = u8::from(record.mapping_quality().unwrap());
-        // let flags = record.flags();
-        // let data = record.data();
-        // let span: usize = record.alignment_span().unwrap().expect("couldn't get alignment span");
-        let align_end = usize::from(record.alignment_end().unwrap().expect("couldn't get alignment end"));
-        // turn this to bytes, then a vec, then convert to string from utf8
-        let name_bytes: &[u8] = record.name().unwrap().as_ref();
-        let name = String::from_utf8(name_bytes.to_vec()).expect("unexpected utf in name");
+        let record = result.context("failed to read BAM record")?;
+        let align_start = usize::from(
+            record.alignment_start()
+                .ok_or_else(|| anyhow::anyhow!("BAM record has no alignment start"))?
+                .context("invalid alignment start position")?
+        );
+        let align_end = usize::from(
+            record.alignment_end()
+                .ok_or_else(|| anyhow::anyhow!("BAM record has no alignment end"))?
+                .context("invalid alignment end position")?
+        );
+        let name_bytes: &[u8] = record.name()
+            .ok_or_else(|| anyhow::anyhow!("BAM record has no name"))?
+            .as_ref();
+        let name = String::from_utf8(name_bytes.to_vec()).context("BAM record name contains invalid UTF-8")?;
         let seq = record.sequence();
         let i_seq = seq.iter().collect_vec();
         let i_qual =  record.quality_scores().as_ref()
@@ -41,7 +42,7 @@ where
         // eprintln!("quality_scores adjusted: {:?}", i_qual);
         // now convert that to a String
         let quality_scores_str: String = String::from_utf8_lossy(&i_qual).into_owned();
-        let cigar = record.cigar().to_cigar_ops();
+        let cigar = record.cigar().to_cigar_ops().context("invalid CIGAR in BAM record")?;
         // Convert CIGAR operations to string by getting each kind, converting to a char, and going len|char and collecting
         // let cigar_string: String = cigar_to_string(&cigar);
         // get start and end position in read sequence coordinates using cigar string
@@ -136,5 +137,5 @@ where
     // eprintln!("Number of reads HAP2: {}", h2_subseq_vec.len());
     // eprintln!("Number of reads no HAP: {}", h0_subseq_vec.len());
 
-    h0_subseq_vec
+    Ok(h0_subseq_vec)
 }

@@ -1,5 +1,5 @@
 use std::f64;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use noodles::sam::alignment::record::cigar::op::Kind;
@@ -157,26 +157,25 @@ pub fn _get_consensus(reads: &Vec<Vec<u8>>) -> Vec<u8>{
 }
 
 
-pub fn read_bed(opts: &Opts,) -> Vec<(Region, String, String)> {
+pub fn read_bed(opts: &Opts) -> Result<Vec<(Region, String, String)>> {
     let mut regions: Vec<(Region, String, String)> = vec![];
-    let reader = BedReader::from_path(&opts.bed).expect("failed to read bed file");
+    let reader = BedReader::from_path(&opts.bed).context("failed to open BED file")?;
     for record in reader {
         match record {
             Ok(record) => {
                 eprintln!("{:?}", record);
                 let chr: String = record.chrom.clone();
-                let start: Position = Position::try_from(record.start).expect("Couldn't get start position");
-                let end: Position = Position::try_from(record.end).expect("Couldn't get end position");
+                let start = Position::try_from(record.start).context("invalid BED start coordinate")?;
+                let end = Position::try_from(record.end).context("invalid BED end coordinate")?;
                 let interval: Interval = Interval::from(start..=end);
                 eprintln!("region: {:?}", Region::new(record.chrom.clone(), interval));
-                let name: String = record.name.unwrap_or(format!("{}:{}-{}", record.chrom, start, end));
+                let name = record.name.unwrap_or_else(|| format!("{}:{}-{}", record.chrom, start, end));
                 regions.push((Region::new(record.chrom, interval), name, chr));
             },
             Err(e) => eprintln!("Error: {}", e),
         }
     }
-    regions
-    // println!("{:?}", regions);
+    Ok(regions)
 }
 
 
@@ -204,7 +203,7 @@ mod tests {
     use crate::cigar::ToCigarOps;
 
     fn cuts(cigar: &str, align_start: usize, region_start: usize, region_end: usize) -> ReadCuts {
-        get_read_cuts(&cigar.to_cigar_ops(), align_start, region_start, region_end)
+        get_read_cuts(&cigar.to_cigar_ops().expect("test CIGAR should be valid"), align_start, region_start, region_end)
     }
 
     // --- pure match ---
@@ -336,11 +335,17 @@ mod tests {
     }
 }
 
-pub fn extract_from_fasta_coords(fasta_path: &str, chrom: &str, start: usize, end: usize) -> Result<String, Box<dyn std::error::Error>> {
-    let mut reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
-    
-    let region = format!("{}:{}-{}", chrom, start, end);
-    let sequence: Vec<u8> = reader.query(&region.parse().expect("Couldn't parse region for sequence")).expect("couldn't get query from reader").sequence().as_ref().to_vec();
-    
-    Ok(String::from_utf8(sequence).expect("couldn't convert sequence to string"))
+pub fn extract_from_fasta_coords(fasta_path: &str, chrom: &str, start: usize, end: usize) -> Result<String> {
+    let mut reader = fasta::io::indexed_reader::Builder::default()
+        .build_from_path(fasta_path)
+        .context("failed to open FASTA file")?;
+    let region_str = format!("{}:{}-{}", chrom, start, end);
+    let parsed: noodles::core::Region = region_str.parse().context("invalid FASTA region coordinates")?;
+    let sequence: Vec<u8> = reader
+        .query(&parsed)
+        .context("FASTA region query failed")?
+        .sequence()
+        .as_ref()
+        .to_vec();
+    String::from_utf8(sequence).context("FASTA sequence contains non-UTF-8 bytes")
 }

@@ -1,3 +1,4 @@
+use anyhow::{bail, Result};
 use clap::{Parser, crate_version};
 use std::path::{Path, PathBuf};
 
@@ -85,33 +86,29 @@ pub struct Opts {
     pub rflank: usize,
 }
 
-fn quit_with_error(text: &str) {
-    eprintln!("\n\nError: {}", text);
-    std::process::exit(1);
-}
-
-fn check_if_file_exists(filename: &PathBuf) {
+fn check_if_file_exists(filename: &PathBuf) -> Result<()> {
     if !Path::new(filename).exists() {
-        let error_msg = format!("The file: {:?} does not exist", filename);
-        quit_with_error(&error_msg);
+        bail!("file not found: {:?}", filename);
     }
+    Ok(())
 }
 
-pub fn check_inputs_exist(opts: &Opts) {
+pub fn check_inputs_exist(opts: &Opts) -> Result<()> {
     if opts.bam.to_str() != Some("None") {
-        check_if_file_exists(&opts.bam);
+        check_if_file_exists(&opts.bam)?;
     }
     if opts.reference.to_str() != Some("None") {
-        check_if_file_exists(&opts.reference);
+        check_if_file_exists(&opts.reference)?;
     }
     if opts.bam.to_str() != Some("None") {
         let mut bai = opts.bam.clone();
         bai.set_extension("bam.bai");
-        check_if_file_exists(&bai);
+        check_if_file_exists(&bai)?;
     }
     if opts.bed.to_str() != Some("None") {
-        check_if_file_exists(&opts.bed);
+        check_if_file_exists(&opts.bed)?;
     }
+    Ok(())
 }
 
 
@@ -123,10 +120,11 @@ pub fn resolve_flanks(flanks: usize, lflank: usize, rflank: usize) -> (usize, us
     (left, right)
 }
 
-pub fn check_option_values(_opts: &Opts) {
+pub fn check_option_values(_opts: &Opts) -> Result<()> {
     // if opts.min_read_count < 1 {
-    //     quit_with_error("--min_read_count must be > 0")
+    //     bail!("--min_read_count must be > 0");
     // }
+    Ok(())
 }
 
 

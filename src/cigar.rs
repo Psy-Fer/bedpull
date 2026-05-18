@@ -1,9 +1,8 @@
+use anyhow::{bail, Context, Result};
 use noodles::sam::alignment::record::cigar::op::Kind;
 use noodles::bam::record::Cigar as BamCigar;
 use noodles::sam::alignment::record::cigar::Cigar as SamCigar;
 
-// create struct to hold a generic cigar format.
-// convert any cigar format into this generic one to be analysed by get_read_cuts
 #[derive(Debug, Clone)]
 pub struct CigarOp {
     pub kind: Kind,
@@ -14,49 +13,41 @@ pub type CigarOps = Vec<CigarOp>;
 
 
 pub trait ToCigarOps {
-    fn to_cigar_ops(&self) -> CigarOps;
+    fn to_cigar_ops(&self) -> Result<CigarOps>;
 }
 
-// handle cigar from noodles
 impl<'a> ToCigarOps for BamCigar<'a> {
-    fn to_cigar_ops(&self) -> CigarOps {
+    fn to_cigar_ops(&self) -> Result<CigarOps> {
         self.iter()
             .map(|op| {
-                let op = op.expect("Invalid CIGAR operation");
-                CigarOp {
-                    kind: op.kind(),
-                    len: op.len(),
-                }
+                let op = op.context("invalid BAM CIGAR operation")?;
+                Ok(CigarOp { kind: op.kind(), len: op.len() })
             })
             .collect()
     }
 }
 
 impl ToCigarOps for dyn SamCigar {
-    fn to_cigar_ops(&self) -> CigarOps {
+    fn to_cigar_ops(&self) -> Result<CigarOps> {
         self.iter()
             .map(|op| {
-                let op = op.expect("Invalid CIGAR operation");
-                CigarOp {
-                    kind: op.kind(),
-                    len: op.len(),
-                }
+                let op = op.context("invalid SAM CIGAR operation")?;
+                Ok(CigarOp { kind: op.kind(), len: op.len() })
             })
             .collect()
     }
 }
-// handle cigar from paf
-impl ToCigarOps for &str {
 
-    fn to_cigar_ops(&self) -> CigarOps {
+impl ToCigarOps for &str {
+    fn to_cigar_ops(&self) -> Result<CigarOps> {
         let mut ops = Vec::new();
         let mut num = String::new();
-        
+
         for ch in self.chars() {
             if ch.is_numeric() {
                 num.push(ch);
             } else {
-                let len = num.parse::<usize>().expect("Invalid CIGAR length");
+                let len = num.parse::<usize>().context("invalid CIGAR length")?;
                 let kind = match ch {
                     'M' => Kind::Match,
                     '=' => Kind::SequenceMatch,
@@ -67,13 +58,13 @@ impl ToCigarOps for &str {
                     'S' => Kind::SoftClip,
                     'H' => Kind::HardClip,
                     'P' => Kind::Pad,
-                    _ => panic!("Unknown CIGAR operation: {}", ch),
+                    _ => bail!("unknown CIGAR operation: {}", ch),
                 };
                 ops.push(CigarOp { kind, len });
                 num.clear();
             }
         }
-        ops
+        Ok(ops)
     }
 }
 
@@ -82,7 +73,7 @@ mod tests {
     use super::*;
 
     fn parse(s: &str) -> CigarOps {
-        s.to_cigar_ops()
+        s.to_cigar_ops().expect("test CIGAR should be valid")
     }
 
     #[test]
@@ -131,8 +122,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn unknown_op_panics() {
-        parse("5Z");
+    fn unknown_op_returns_error() {
+        assert!("5Z".to_cigar_ops().is_err());
     }
 }

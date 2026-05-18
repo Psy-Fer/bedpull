@@ -8,9 +8,7 @@ mod paf;
 use std::fs::File;
 use std::io::BufWriter;
 use std::fs::OpenOptions;
-use anyhow::Result;
-
-use anyhow::Ok;
+use anyhow::{Context, Result};
 use clap::Parser;
 use noodles::bam;
 
@@ -32,12 +30,12 @@ fn effective_flanks(opts: &Opts) -> (usize, usize) {
 fn main() -> Result<()>{
     let opts: Opts = Opts::parse();
     eprintln!("{:#?}", opts);
-    crate::cli::check_option_values(&opts);
-    crate::cli::check_inputs_exist(&opts);
+    crate::cli::check_option_values(&opts)?;
+    crate::cli::check_inputs_exist(&opts)?;
 
     
     eprintln!("Reading bed file");
-    let regions: Vec<(noodles::core::Region, String, String)> = read_bed(&opts);
+    let regions = read_bed(&opts)?;
 
     let output_file = OpenOptions::new()
         .write(true)
@@ -58,22 +56,21 @@ fn main() -> Result<()>{
     if opts.bam.to_str() != Some("None"){
         eprintln!("Bam mode");
         eprintln!("Extracting sequences");
-        extract_from_bam(&opts, regions, &mut read_writer);
-    } 
-    
+        extract_from_bam(&opts, regions, &mut read_writer)?;
+    }
+
     // if paf
     else if opts.paf.to_str() != Some("None") && opts.query_ref.to_str() != Some("None"){
         eprintln!("paf mode");
         eprintln!("Extracting sequences");
-        extract_from_paf(&opts, regions, &mut read_writer);
-               
+        extract_from_paf(&opts, regions, &mut read_writer)?;
     }  
 
     eprintln!("Done");
     Ok(())
 }
 
-pub fn extract_from_bam(opts: &Opts, regions: Vec<(noodles::core::Region, String, String)>, read_writer: &mut BufWriter<File>) {
+pub fn extract_from_bam(opts: &Opts, regions: Vec<(noodles::core::Region, String, String)>, read_writer: &mut BufWriter<File>) -> Result<()> {
     // for region in bed
     for (region, region_name, chr) in regions.iter() {
         eprintln!("===============================");
@@ -86,15 +83,17 @@ pub fn extract_from_bam(opts: &Opts, regions: Vec<(noodles::core::Region, String
         }
     
         // open bam
-        let mut reader= bam::io::indexed_reader::Builder::default().build_from_path(&opts.bam).expect("Couldn't read bam");
-        let header: noodles::sam::Header = reader.read_header().expect("Couldn't read header");
-        let query = reader.query(&header, &region).expect("Couldn't find query");
-        
+        let mut reader = bam::io::indexed_reader::Builder::default()
+            .build_from_path(&opts.bam)
+            .context("failed to open BAM file")?;
+        let header = reader.read_header().context("failed to read BAM header")?;
+        let query = reader.query(&header, &region).context("BAM region query failed")?;
+
         // find all reads that map to region
         // apply filters (full length, quality, etc)
         // cut out sequence (optionally qstring too and do quality calculation)
         let (lflank, rflank) = effective_flanks(&opts);
-        let overlapping_reads: Vec<(String, Vec<u8>, String, usize, usize)> = get_bam_reads(&opts, query, &region, lflank, rflank);
+        let overlapping_reads = get_bam_reads(&opts, query, &region, lflank, rflank)?;
         if overlapping_reads.len() == 0 {
             eprintln!("No reads found for region in bam file. Skipping region: {}", region_name);
             continue;
@@ -105,39 +104,40 @@ pub fn extract_from_bam(opts: &Opts, regions: Vec<(noodles::core::Region, String
         for (name, subseq, subqual, _ref_start, _ref_end) in overlapping_reads {
             let head = format!("{}|{}:{:?}-{:?}|{}", name, chr, region_start, region_end, region_name);
             if opts.fastq {
-                write_fastq_record(read_writer, &head, &std::str::from_utf8(&subseq).expect("unexpected utf8 in sequence"), &subqual).expect("Couldn't write fastq record");
-            }
-            else {
-                write_fasta_record(read_writer, &head, &std::str::from_utf8(&subseq).expect("unexpected utf8 in sequence")).expect("Couldn't write fasta record");
+                write_fastq_record(read_writer, &head, std::str::from_utf8(&subseq).context("BAM sequence contains invalid UTF-8")?, &subqual)
+                    .context("failed to write FASTQ record")?;
+            } else {
+                write_fasta_record(read_writer, &head, std::str::from_utf8(&subseq).context("BAM sequence contains invalid UTF-8")?)
+                    .context("failed to write FASTA record")?;
             }
         }
         // if consensus: generate consensus
         // write to consensus fasta (potential fastq using mean q score per base?)
-        }
-
+    }
+    Ok(())
 }
 
 
-pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String, String)>, read_writer: &mut BufWriter<File>) {
+pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String, String)>, read_writer: &mut BufWriter<File>) -> Result<()> {
     // Build or load index
-    let paf_path: &str = opts.paf.to_str().expect("couldn't get paf string");
-    let query_ref = opts.query_ref.to_str().expect("Couldn't get query_ref string");
+    let paf_path = opts.paf.to_str().context("PAF path contains invalid UTF-8")?;
+    let query_ref = opts.query_ref.to_str().context("query_ref path contains invalid UTF-8")?;
     let index_path = format!("{}.idx", paf_path);
     let index = if opts.use_paf_index {
         if std::path::Path::new(&index_path).exists() {
             eprintln!("Loading PAF index from {}", index_path);
-            PafIndex::load(&index_path).expect("couldn't load index")
-        // if can't load it, build it
+            PafIndex::load(&index_path)
+                .with_context(|| format!("failed to load PAF index from {}", index_path))?
         } else {
             eprintln!("Building PAF index...");
-            let index = PafIndex::build(paf_path).expect("couldn't build paf index");
-            index.save(&index_path).expect("Failed to save paf index");
+            let index = PafIndex::build(paf_path).context("failed to build PAF index")?;
+            index.save(&index_path)
+                .with_context(|| format!("failed to save PAF index to {}", index_path))?;
             eprintln!("Index saved to {}", index_path);
             index
         }
-    // else build it
     } else {
-        PafIndex::build(paf_path).expect("Couldn't build paf index")
+        PafIndex::build(paf_path).context("failed to build PAF index")?
     };
 
     // for each region, get paf regions and extract sequences
@@ -162,7 +162,8 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
         // TODO: move this stuff to the reads.rs file under get_paf_reads
         // Read actual PAF records from file
         for entry in overlapping_entries {
-            let paf_record = read_paf_record_at_offset(paf_path, entry.offset).unwrap();
+            let paf_record = read_paf_record_at_offset(paf_path, entry.offset)
+                .with_context(|| format!("failed to read PAF record at offset {}", entry.offset))?;
 
             // Warn only when the core region (not the flanks) isn't fully covered.
             if paf_record.target_start > region_start {
@@ -178,7 +179,8 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
 
             if let Some(cigar_str) = &paf_record.cigar {
                 // Convert CIGAR and calculate query coordinates
-                let cigar_ops = cigar_str.as_str().to_cigar_ops();
+                let cigar_ops = cigar_str.as_str().to_cigar_ops()
+                    .context("invalid CIGAR string in PAF record")?;
                 let cuts = get_read_cuts(&cigar_ops, paf_record.target_start, eff_start, eff_end);
                 
                 // Validate cuts
@@ -200,7 +202,8 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
                 eprintln!("Query coords: {}:{}-{}", paf_record.query_name, query_start, query_end);
                 
                 // Extract from query FASTA
-                let sequence = extract_from_fasta_coords(query_ref, &paf_record.query_name, query_start, query_end).expect("couldn't extract fasta sequence");
+                let sequence = extract_from_fasta_coords(query_ref, &paf_record.query_name, query_start, query_end)
+                    .with_context(|| format!("failed to extract sequence for {}", paf_record.query_name))?;
                 
                 // Write fasta output
                 let header = format!("{}|ref_{}:{}-{}|query_{}:{}-{}", 
@@ -211,10 +214,12 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
                                                 paf_record.query_name,
                                                 query_start,
                                                 query_end);
-                write_fasta_record(read_writer, &header, &sequence).expect("Failed to write fasta");
+                write_fasta_record(read_writer, &header, &sequence)
+                    .context("failed to write FASTA record")?;
             }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -254,7 +259,7 @@ mod tests {
     fn get_read_cuts_rfc1_captures_insertion() {
         let r = read_paf_record_at_offset(PAF_PATH, 0).unwrap();
         let cigar_str = r.cigar.as_deref().expect("no CIGAR");
-        let ops = cigar_str.to_cigar_ops();
+        let ops = cigar_str.to_cigar_ops().expect("valid CIGAR from PAF file");
         let cuts = get_read_cuts(&ops, RFC1_TARGET_START, RFC1_REGION_START, RFC1_REGION_END);
         let extracted_len = cuts.read_end - cuts.read_start;
         assert_eq!(
