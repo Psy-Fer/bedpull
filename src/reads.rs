@@ -32,6 +32,14 @@ where
             continue;
         }
 
+        let flags = record.flags();
+        if flags.is_secondary() && !opts.include_secondary {
+            continue;
+        }
+        if flags.is_supplementary() && !opts.include_supplementary {
+            continue;
+        }
+
         let align_start = usize::from(
             record
                 .alignment_start()

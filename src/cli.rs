@@ -100,6 +100,14 @@ pub struct Opts {
     #[clap(long = "min_mapq", default_value = "0", display_order = 8)]
     pub min_mapq: u8,
 
+    /// Include secondary alignments (BAM only; default: skip)
+    #[clap(long = "include_secondary", display_order = 8)]
+    pub include_secondary: bool,
+
+    /// Include supplementary alignments (BAM only; default: skip)
+    #[clap(long = "include_supplementary", display_order = 8)]
+    pub include_supplementary: bool,
+
     /// Symmetric reference flank to add on both sides before CIGAR walk (bp)
     #[clap(long = "flanks", default_value = "0", display_order = 9)]
     pub flanks: usize,
@@ -179,6 +187,8 @@ mod tests {
             use_paf_index: true,
             fastq,
             min_mapq: 0,
+            include_secondary: false,
+            include_supplementary: false,
             flanks: 0,
             lflank: 0,
             rflank: 0,
