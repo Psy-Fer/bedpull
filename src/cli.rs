@@ -92,9 +92,13 @@ pub struct Opts {
     #[clap(long = "use_paf_index", default_value = "true", display_order = 8)]
     pub use_paf_index: bool,
 
-    /// write fastq (BAM only)
+    /// Write FASTQ instead of FASTA (BAM only)
     #[clap(long = "fastq", display_order = 8)]
     pub fastq: bool,
+
+    /// Minimum mapping quality (MAPQ) to include a read (BAM only; 0 = no filter)
+    #[clap(long = "min_mapq", default_value = "0", display_order = 8)]
+    pub min_mapq: u8,
 
     /// Symmetric reference flank to add on both sides before CIGAR walk (bp)
     #[clap(long = "flanks", default_value = "0", display_order = 9)]
@@ -142,10 +146,10 @@ pub fn resolve_flanks(flanks: usize, lflank: usize, rflank: usize) -> (usize, us
     (left, right)
 }
 
-pub fn check_option_values(_opts: &Opts) -> Result<()> {
-    // if opts.min_read_count < 1 {
-    //     bail!("--min_read_count must be > 0");
-    // }
+pub fn check_option_values(opts: &Opts) -> Result<()> {
+    if opts.fastq && opts.bam.to_str() == Some("None") {
+        bail!("--fastq requires --bam");
+    }
     Ok(())
 }
 
@@ -161,7 +165,40 @@ pub fn check_option_values(_opts: &Opts) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_flanks;
+    use super::*;
+    use std::path::PathBuf;
+
+    fn make_opts(fastq: bool, bam: &str) -> Opts {
+        Opts {
+            bam: PathBuf::from(bam),
+            reference: PathBuf::from("None"),
+            bed: PathBuf::from("test.bed"),
+            paf: PathBuf::from("None"),
+            query_ref: PathBuf::from("None"),
+            output: PathBuf::from("out.fasta"),
+            use_paf_index: true,
+            fastq,
+            min_mapq: 0,
+            flanks: 0,
+            lflank: 0,
+            rflank: 0,
+        }
+    }
+
+    #[test]
+    fn fastq_without_bam_is_error() {
+        assert!(check_option_values(&make_opts(true, "None")).is_err());
+    }
+
+    #[test]
+    fn fastq_with_bam_is_ok() {
+        assert!(check_option_values(&make_opts(true, "reads.bam")).is_ok());
+    }
+
+    #[test]
+    fn no_fastq_no_bam_is_ok() {
+        assert!(check_option_values(&make_opts(false, "None")).is_ok());
+    }
 
     #[test]
     fn all_zero_gives_zero() {

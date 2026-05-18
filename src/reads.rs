@@ -13,7 +13,7 @@ pub type BamRead = (String, Vec<u8>, String, usize, usize);
 
 // For bam reading
 pub fn get_bam_reads<R>(
-    _opts: &Opts,
+    opts: &Opts,
     query: bam::io::reader::Query<R>,
     region: &Region,
     lflank: usize,
@@ -26,6 +26,12 @@ where
 
     for result in query.records() {
         let record = result.context("failed to read BAM record")?;
+
+        let map_quality = record.mapping_quality().map(u8::from).unwrap_or(255);
+        if map_quality < opts.min_mapq {
+            continue;
+        }
+
         let align_start = usize::from(
             record
                 .alignment_start()
@@ -67,13 +73,6 @@ where
         // then continue through read until ref coord end-> read position for subsequence end
         // extract subsequence and chuck it into vector to be worked on
         // read_cuts = (start, end)
-
-        // TODO: filter reads by map_quality
-        // if map_quality < opts.min_map_score {
-        //     eprintln!("{} read map score {} too low (min: {})", name, map_quality, opts.min_map_score);
-        //     counter -= 1;
-        //     continue;
-        // }
 
         // TODO: filter reads by mean read quality
         // let read_mean_qscore: f64 = calculate_qscore(&quality_scores_str);
