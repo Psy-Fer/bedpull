@@ -88,7 +88,7 @@ pub fn extract_from_bam(opts: &Opts, regions: Vec<(noodles::core::Region, String
         // open bam
         let mut reader= bam::io::indexed_reader::Builder::default().build_from_path(&opts.bam).expect("Couldn't read bam");
         let header: noodles::sam::Header = reader.read_header().expect("Couldn't read header");
-        let query: bam::io::reader::Query<File> = reader.query(&header, &region).expect("Couldn't find query");
+        let query = reader.query(&header, &region).expect("Couldn't find query");
         
         // find all reads that map to region
         // apply filters (full length, quality, etc)
@@ -267,4 +267,5 @@ mod tests {
     fn resolve_flanks_zero_is_identity() {
         assert_eq!(resolve_flanks(0, 0, 0), (0, 0));
     }
+
 }

@@ -79,6 +79,7 @@ impl BedReader<BufReader<File>> {
 }
 
 impl<R: BufRead> BedReader<R> {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn from_reader(reader: R) -> Self {
         BedReader { reader }
     }

@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use std::fs::File;
 use noodles::bam;
 use noodles::core::Region;
 use noodles::sam::alignment::Record;
@@ -9,12 +8,15 @@ use crate::utils::{get_read_cuts, ReadCuts};
 pub use crate::cigar::ToCigarOps;
 
 // For bam reading
-pub fn get_bam_reads(_opts: &Opts, query: bam::io::reader::Query<File>, region: &Region, lflank: usize, rflank: usize) -> Vec<(String, Vec<u8>, String, usize, usize)>{
+pub fn get_bam_reads<R>(_opts: &Opts, query: bam::io::reader::Query<R>, region: &Region, lflank: usize, rflank: usize) -> Vec<(String, Vec<u8>, String, usize, usize)>
+where
+    R: noodles::bgzf::io::BufRead + noodles::bgzf::io::Seek,
+{
 
     let mut h0_subseq_vec: Vec<(String, Vec<u8>, String, usize, usize)> = vec![]; // no hap assigned
     
     // let mut counter = 0;
-    for result in query {
+    for result in query.records() {
         // counter += 1;
         let record = result.expect("Couldn't read result");
         // let ref_id = record.reference_sequence_id().unwrap().expect("ref_id had an error");
@@ -27,7 +29,8 @@ pub fn get_bam_reads(_opts: &Opts, query: bam::io::reader::Query<File>, region: 
         // let span: usize = record.alignment_span().unwrap().expect("couldn't get alignment span");
         let align_end = usize::from(record.alignment_end().unwrap().expect("couldn't get alignment end"));
         // turn this to bytes, then a vec, then convert to string from utf8
-        let name = String::from_utf8(record.name().unwrap().as_bytes().to_vec()).expect("unexpected utf in name");
+        let name_bytes: &[u8] = record.name().unwrap().as_ref();
+        let name = String::from_utf8(name_bytes.to_vec()).expect("unexpected utf in name");
         let seq = record.sequence();
         let i_seq = seq.iter().collect_vec();
         let i_qual =  record.quality_scores().as_ref()

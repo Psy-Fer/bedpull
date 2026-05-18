@@ -3,12 +3,6 @@
 version = 4
 
 [[package]]
-name = "adler2"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -120,7 +114,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0700ddab506f33b20a03b13996eccd309a48e5ff77d0d95926aa0210fb4e95f1"
 dependencies = [
- "bit-vec",
+ "bit-vec 0.6.3",
 ]
 
 [[package]]
@@ -128,6 +122,15 @@ name = "bit-vec"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
+
+[[package]]
+name = "bit-vec"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "bitflags"
@@ -229,15 +232,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2850f2f5a82cbf437dd5af4d49848fbdfc27c157c3d010345776f952765261c5"
 dependencies = [
  "os_str_bytes",
-]
-
-[[package]]
-name = "crc32fast"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
-dependencies = [
- "cfg-if",
 ]
 
 [[package]]
@@ -358,16 +352,6 @@ name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
-
-[[package]]
-name = "flate2"
-version = "1.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc5a4e564e38c699f2880d3fda590bedc2e69f3f84cd48b457bd892ce61d0aa9"
-dependencies = [
- "crc32fast",
- "miniz_oxide",
-]
 
 [[package]]
 name = "foldhash"
@@ -533,9 +517,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "lexical-core"
-version = "0.8.5"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cde5de06e8d4c2faabc400238f9ae1c74d5412d03a7bd067645ccbc47070e46"
+checksum = "7d8d125a277f807e55a77304455eb7b1cb52f2b18c143b60e766c120bd64a594"
 dependencies = [
  "lexical-parse-float",
  "lexical-parse-integer",
@@ -546,53 +530,46 @@ dependencies = [
 
 [[package]]
 name = "lexical-parse-float"
-version = "0.8.5"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "683b3a5ebd0130b8fb52ba0bdc718cc56815b6a097e28ae5a6997d0ad17dc05f"
+checksum = "52a9f232fbd6f550bc0137dcb5f99ab674071ac2d690ac69704593cb4abbea56"
 dependencies = [
  "lexical-parse-integer",
  "lexical-util",
- "static_assertions",
 ]
 
 [[package]]
 name = "lexical-parse-integer"
-version = "0.8.6"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d0994485ed0c312f6d965766754ea177d07f9c00c9b82a5ee62ed5b47945ee9"
+checksum = "9a7a039f8fb9c19c996cd7b2fcce303c1b2874fe1aca544edc85c4a5f8489b34"
 dependencies = [
  "lexical-util",
- "static_assertions",
 ]
 
 [[package]]
 name = "lexical-util"
-version = "0.8.5"
+version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5255b9ff16ff898710eb9eb63cb39248ea8a5bb036bea8085b1a767ff6c4e3fc"
-dependencies = [
- "static_assertions",
-]
+checksum = "2604dd126bb14f13fb5d1bd6a66155079cb9fa655b37f875b3a742c705dbed17"
 
 [[package]]
 name = "lexical-write-float"
-version = "0.8.5"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accabaa1c4581f05a3923d1b4cfd124c329352288b7b9da09e766b0668116862"
+checksum = "50c438c87c013188d415fbabbb1dceb44249ab81664efbd31b14ae55dabb6361"
 dependencies = [
  "lexical-util",
  "lexical-write-integer",
- "static_assertions",
 ]
 
 [[package]]
 name = "lexical-write-integer"
-version = "0.8.5"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1b6f3d1f4422866b68192d62f77bc5c700bee84f3069f2469d7bc8c77852446"
+checksum = "409851a618475d2d5796377cad353802345cba92c867d9fbcde9cf4eac4e14df"
 dependencies = [
  "lexical-util",
- "static_assertions",
 ]
 
 [[package]]
@@ -640,16 +617,6 @@ name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
-
-[[package]]
-name = "miniz_oxide"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
-dependencies = [
- "adler2",
- "simd-adler32",
-]
 
 [[package]]
 name = "multimap"
@@ -713,12 +680,13 @@ dependencies = [
 
 [[package]]
 name = "noodles"
-version = "0.66.0"
+version = "0.110.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f806040f810a3f911dd67246d9361b9e3d149e2b5ed02da43f909835b25fa26"
+checksum = "34e7ed524a472dbd0dc69cc7b63408f37552e48460028af44a3024f2eb77f036"
 dependencies = [
  "noodles-bam",
  "noodles-bed",
+ "noodles-bgzf",
  "noodles-core",
  "noodles-fasta",
  "noodles-fastq",
@@ -727,15 +695,13 @@ dependencies = [
 
 [[package]]
 name = "noodles-bam"
-version = "0.57.0"
+version = "0.89.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a7ece1f74b93a96246c881a9e5710a6d2d1ff23f6503ac1c3ba04819c5f459"
+checksum = "f0c1872afd5963f751ae78ef04ab3fb050aefc615c05c04cda7c54120eedf9b0"
 dependencies = [
- "bit-vec",
  "bstr",
- "byteorder",
- "bytes",
  "indexmap 2.12.0",
+ "memchr",
  "noodles-bgzf",
  "noodles-core",
  "noodles-csi",
@@ -744,39 +710,47 @@ dependencies = [
 
 [[package]]
 name = "noodles-bed"
-version = "0.12.0"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c116ff14e3dd3ffa6c58771d1a2ee1205690e1c0fe78b0a3456402eebf44ad27"
+checksum = "2ad46dbc7be2479a583a439ec29922feb851c2bc57ddb28a98f53fe42bc4e355"
 dependencies = [
+ "bstr",
+ "lexical-core",
+ "memchr",
+ "noodles-bgzf",
  "noodles-core",
+ "noodles-csi",
+ "noodles-tabix",
 ]
 
 [[package]]
 name = "noodles-bgzf"
-version = "0.27.0"
+version = "0.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43ce62d1e012aa3793e17be1c286b8b71dad5a902a19524eb21729ed16113a9b"
+checksum = "4d22589ec50582fa0c3e629d27e5263fc5ff5d436955648ba601b7ac4155fbf2"
 dependencies = [
- "byteorder",
  "bytes",
  "crossbeam-channel",
- "flate2",
+ "zlib-rs",
 ]
 
 [[package]]
 name = "noodles-core"
-version = "0.14.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7336c3be652de4e05444c9b12a32331beb5ba3316e8872d92bfdd8ef3b06c282"
+checksum = "c8dbac7c5f9a7de9fe45590f198a09697df631cd13d2060b4742cc48144555b0"
+dependencies = [
+ "bstr",
+]
 
 [[package]]
 name = "noodles-csi"
-version = "0.31.0"
+version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "512e6c224fcffe4586e408b75f3f5e46fa6d5fe77a2db2afad6b3d085f6cd53a"
+checksum = "6832254d731cb022d46927ce64403221b280b17140516cafa21e43ee4140d633"
 dependencies = [
- "bit-vec",
- "byteorder",
+ "bit-vec 0.9.1",
+ "bstr",
  "indexmap 2.12.0",
  "noodles-bgzf",
  "noodles-core",
@@ -784,11 +758,11 @@ dependencies = [
 
 [[package]]
 name = "noodles-fasta"
-version = "0.34.0"
+version = "0.61.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a838081c9f88c96c7a2c14c8c8a3303f282964b9e91fb53de2f3f9ef8c272b21"
+checksum = "f0e6a772d7a5cb566196d1a1806c4471ad63bc6ffad5b2d549e9602708a9aaab"
 dependencies = [
- "bytes",
+ "bstr",
  "memchr",
  "noodles-bgzf",
  "noodles-core",
@@ -796,24 +770,38 @@ dependencies = [
 
 [[package]]
 name = "noodles-fastq"
-version = "0.10.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03559005dc319f23454e0ae6804f72d27da2d4293c2dcc01ff7b0d8c5d59ab9f"
+checksum = "f1bd7ca5f1595f089e7373da29fbcda325e05f02ca130424b09e9a877f9de9f9"
 dependencies = [
+ "bstr",
  "memchr",
 ]
 
 [[package]]
 name = "noodles-sam"
-version = "0.54.0"
+version = "0.85.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8e1cf471985956a9cd12a8f363f2e8d3069dd843bc11f2920a82bb190f8c122"
+checksum = "fbaf538bea4f886de8b3fb611784a13f82c9f8e08e942849e88ec44234674512"
 dependencies = [
  "bitflags 2.10.0",
  "bstr",
  "indexmap 2.12.0",
  "lexical-core",
  "memchr",
+ "noodles-bgzf",
+ "noodles-core",
+ "noodles-csi",
+]
+
+[[package]]
+name = "noodles-tabix"
+version = "0.62.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5dceef2f7228d2977133f7b1a707c00ce0fdcf7c171e60b1e0286df0d8886fe"
+dependencies = [
+ "bstr",
+ "indexmap 2.12.0",
  "noodles-bgzf",
  "noodles-core",
  "noodles-csi",
@@ -1160,18 +1148,6 @@ dependencies = [
  "paste",
  "wide",
 ]
-
-[[package]]
-name = "simd-adler32"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d66dc143e6b11c1eddc06d5c423cfc97062865baf299914ab64caa38182078fe"
-
-[[package]]
-name = "static_assertions"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "statrs"
@@ -1723,6 +1699,12 @@ dependencies = [
  "quote",
  "syn 2.0.107",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3be3d40e40a133f9c916ee3f9f4fa2d9d63435b5fbe1bfc6d9dae0aa0ada1513"
 
 [[package]]
 name = "zmij"

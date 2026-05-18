@@ -337,7 +337,7 @@ mod tests {
 }
 
 pub fn extract_from_fasta_coords(fasta_path: &str, chrom: &str, start: usize, end: usize) -> Result<String, Box<dyn std::error::Error>> {
-    let mut reader = fasta::indexed_reader::Builder::default().build_from_path(fasta_path)?;
+    let mut reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
     
     let region = format!("{}:{}-{}", chrom, start, end);
     let sequence: Vec<u8> = reader.query(&region.parse().expect("Couldn't parse region for sequence")).expect("couldn't get query from reader").sequence().as_ref().to_vec();
