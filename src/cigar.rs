@@ -1,7 +1,7 @@
-use anyhow::{bail, Context, Result};
-use noodles::sam::alignment::record::cigar::op::Kind;
+use anyhow::{Context, Result, bail};
 use noodles::bam::record::Cigar as BamCigar;
 use noodles::sam::alignment::record::cigar::Cigar as SamCigar;
+use noodles::sam::alignment::record::cigar::op::Kind;
 
 #[derive(Debug, Clone)]
 pub struct CigarOp {
@@ -10,7 +10,6 @@ pub struct CigarOp {
 }
 
 pub type CigarOps = Vec<CigarOp>;
-
 
 pub trait ToCigarOps {
     fn to_cigar_ops(&self) -> Result<CigarOps>;
@@ -21,7 +20,10 @@ impl<'a> ToCigarOps for BamCigar<'a> {
         self.iter()
             .map(|op| {
                 let op = op.context("invalid BAM CIGAR operation")?;
-                Ok(CigarOp { kind: op.kind(), len: op.len() })
+                Ok(CigarOp {
+                    kind: op.kind(),
+                    len: op.len(),
+                })
             })
             .collect()
     }
@@ -32,7 +34,10 @@ impl ToCigarOps for dyn SamCigar {
         self.iter()
             .map(|op| {
                 let op = op.context("invalid SAM CIGAR operation")?;
-                Ok(CigarOp { kind: op.kind(), len: op.len() })
+                Ok(CigarOp {
+                    kind: op.kind(),
+                    len: op.len(),
+                })
             })
             .collect()
     }

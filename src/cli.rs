@@ -1,8 +1,6 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::{Parser, crate_version};
 use std::path::{Path, PathBuf};
-
-
 
 #[derive(Parser, Debug)]
 // #[command(author, version, about, long_about = None)]
@@ -18,31 +16,57 @@ use std::path::{Path, PathBuf};
                              r#"                 /_/                  "#, "\n",)
         )
         ]
-                                                                                              
-
 pub struct Opts {
     /// Aligned bam file
-    #[clap(short = 'b', long = "bam", parse(from_os_str), default_value = "None", display_order = 1)]
+    #[clap(
+        short = 'b',
+        long = "bam",
+        parse(from_os_str),
+        default_value = "None",
+        display_order = 1
+    )]
     pub bam: PathBuf,
-    
+
     /// Reference *.fa/fasta
-    #[clap(short = 'f', long = "reference", parse(from_os_str), default_value = "None", display_order = 2)]
+    #[clap(
+        short = 'f',
+        long = "reference",
+        parse(from_os_str),
+        default_value = "None",
+        display_order = 2
+    )]
     pub reference: PathBuf,
 
     /// Bed file of targets
-    #[clap(short = 'r', long = "bed", parse(from_os_str), required=true, display_order = 3)]
+    #[clap(
+        short = 'r',
+        long = "bed",
+        parse(from_os_str),
+        required = true,
+        display_order = 3
+    )]
     pub bed: PathBuf,
 
     /// paf file - ideally used for assembly to reference mapping
-    #[clap(long = "paf", parse(from_os_str), default_value = "None", display_order = 3)]
+    #[clap(
+        long = "paf",
+        parse(from_os_str),
+        default_value = "None",
+        display_order = 3
+    )]
     pub paf: PathBuf,
 
     /// query reference file (used with paf for extracting sequence)
-    #[clap(long = "query_ref", parse(from_os_str), default_value = "None", display_order = 3)]
+    #[clap(
+        long = "query_ref",
+        parse(from_os_str),
+        default_value = "None",
+        display_order = 3
+    )]
     pub query_ref: PathBuf,
 
     /// Write a fasta or optionally fastq (bam required) file with extracted query sequences
-    #[clap(short = 'o', long = "output", required=true, display_order = 4)]
+    #[clap(short = 'o', long = "output", required = true, display_order = 4)]
     pub output: PathBuf,
 
     // /// Create a consensus sequence from extracted sequences for each region
@@ -60,13 +84,12 @@ pub struct Opts {
     // /// Split sequences based on haplotype tag HP
     // #[clap(short = 'h', long = "hap_split", display_order = 7)]
     // pub hap_split: bool,
-    
+
     // /// Use 4th column of bed to add name to output
     // #[clap(short = 'n', long = "name", display_order = 8)]
     // pub name: bool,
-
     /// Use paf index
-    #[clap(long = "use_paf_index", default_value="true", display_order = 8)]
+    #[clap(long = "use_paf_index", default_value = "true", display_order = 8)]
     pub use_paf_index: bool,
 
     /// write fastq (BAM only)
@@ -111,11 +134,10 @@ pub fn check_inputs_exist(opts: &Opts) -> Result<()> {
     Ok(())
 }
 
-
 /// Resolve the three flank args into (lflank, rflank).
 /// Per-side values take precedence over the symmetric --flanks shorthand.
 pub fn resolve_flanks(flanks: usize, lflank: usize, rflank: usize) -> (usize, usize) {
-    let left  = if lflank > 0 { lflank } else { flanks };
+    let left = if lflank > 0 { lflank } else { flanks };
     let right = if rflank > 0 { rflank } else { flanks };
     (left, right)
 }
@@ -126,7 +148,6 @@ pub fn check_option_values(_opts: &Opts) -> Result<()> {
     // }
     Ok(())
 }
-
 
 // pub fn get_opts() -> Opts{
 

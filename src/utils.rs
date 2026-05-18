@@ -1,26 +1,22 @@
-use std::f64;
 use anyhow::{Context, Result};
+use bio::alignment::pairwise::Scoring;
+use bio::alignment::poa::Aligner as poAligner;
+use noodles::fasta;
+use noodles::sam::alignment::record::cigar::op::Kind;
+use std::f64;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use noodles::sam::alignment::record::cigar::op::Kind;
-use noodles::fasta;
-use bio::alignment::poa::Aligner as poAligner;
-use bio::alignment::pairwise::Scoring;
 
-use noodles::core::{Region, region::Interval, Position};
+use noodles::core::{Position, Region, region::Interval};
 
 use crate::bed::BedReader;
-use crate::cli::Opts;
 use crate::cigar::CigarOps;
-
+use crate::cli::Opts;
 
 /// Calculate the mean Qscore from a Qstring.
-pub fn _calculate_qscore(qstring: &String) -> f64 {
+pub fn _calculate_qscore(qstring: &str) -> f64 {
     // Convert phred back to ASCII values and adjust -33
-    let qs: Vec<f64> = qstring
-        .chars()
-        .map(|c| (c as u8) as f64 - 33.0)
-        .collect();
+    let qs: Vec<f64> = qstring.chars().map(|c| (c as u8) as f64 - 33.0).collect();
 
     // Calculate mean error
     let mean_err: f64 = qs
@@ -49,14 +45,19 @@ pub struct ReadCuts {
 /// This can be used to cut out a substring of the read sequence matching the target region
 /// Assumes read has full coverage of region
 /// TODO: Allow for partial overlaps with flags.
-pub fn get_read_cuts(cigar_ops: &CigarOps, align_start: usize,region_start: usize, region_end: usize) -> ReadCuts {
+pub fn get_read_cuts(
+    cigar_ops: &CigarOps,
+    align_start: usize,
+    region_start: usize,
+    region_end: usize,
+) -> ReadCuts {
     let mut start: usize = 0;
     let mut end: usize = 0;
     let mut r_start: usize = 0;
     let mut r_end: usize = 0;
     let mut pos: usize = 0;
     let mut ref_pos: usize = align_start;
-    
+
     let ref_start = region_start;
     let ref_end = region_end;
 
@@ -96,7 +97,7 @@ pub fn get_read_cuts(cigar_ops: &CigarOps, align_start: usize,region_start: usiz
                     ref_pos += op.len;
                     pos += op.len;
                 }
-            },
+            }
             Kind::Insertion | Kind::SoftClip => {
                 pos += op.len;
             }
@@ -130,32 +131,36 @@ pub fn get_read_cuts(cigar_ops: &CigarOps, align_start: usize,region_start: usiz
                 } else {
                     ref_pos += op.len;
                 }
-            },
-            Kind::HardClip | Kind::Pad => {continue;},
+            }
+            Kind::HardClip | Kind::Pad => {
+                continue;
+            }
         }
     }
-    
-    ReadCuts { read_start: start, read_end: end, ref_start: r_start, ref_end: r_end }
+
+    ReadCuts {
+        read_start: start,
+        read_end: end,
+        ref_start: r_start,
+        ref_end: r_end,
+    }
 }
 
-
-pub fn _get_consensus(reads: &Vec<Vec<u8>>) -> Vec<u8>{
-
+pub fn _get_consensus(reads: &[Vec<u8>]) -> Vec<u8> {
     let scoring = Scoring::new(-1, 0, |a: u8, b: u8| if a == b { 1i32 } else { -1i32 });
     // use first sequence as the reference
     let first_read = &reads[0];
-    let mut aligner = poAligner::new(scoring,  first_read);
-    for read in reads[1..].iter(){
+    let mut aligner = poAligner::new(scoring, first_read);
+    for read in reads[1..].iter() {
         // add all other reads to graph
         aligner.global(read).add_to_graph();
     }
-    
+
     // get consensus
     let consensus: Vec<u8> = aligner.consensus();
 
     consensus
 }
-
 
 pub fn read_bed(opts: &Opts) -> Result<Vec<(Region, String, String)>> {
     let mut regions: Vec<(Region, String, String)> = vec![];
@@ -165,29 +170,40 @@ pub fn read_bed(opts: &Opts) -> Result<Vec<(Region, String, String)>> {
             Ok(record) => {
                 eprintln!("{:?}", record);
                 let chr: String = record.chrom.clone();
-                let start = Position::try_from(record.start).context("invalid BED start coordinate")?;
+                let start =
+                    Position::try_from(record.start).context("invalid BED start coordinate")?;
                 let end = Position::try_from(record.end).context("invalid BED end coordinate")?;
                 let interval: Interval = Interval::from(start..=end);
                 eprintln!("region: {:?}", Region::new(record.chrom.clone(), interval));
-                let name = record.name.unwrap_or_else(|| format!("{}:{}-{}", record.chrom, start, end));
+                let name = record
+                    .name
+                    .unwrap_or_else(|| format!("{}:{}-{}", record.chrom, start, end));
                 regions.push((Region::new(record.chrom, interval), name, chr));
-            },
+            }
             Err(e) => eprintln!("Error: {}", e),
         }
     }
     Ok(regions)
 }
 
-
 // write a fasta record
-pub fn write_fasta_record(writer: &mut BufWriter<File>, header: &str, sequence: &str) -> Result<()> {
+pub fn write_fasta_record(
+    writer: &mut BufWriter<File>,
+    header: &str,
+    sequence: &str,
+) -> Result<()> {
     writeln!(writer, ">{}", header)?;
     writeln!(writer, "{}", sequence)?;
     Ok(())
 }
 
 // write a fastq record
-pub fn write_fastq_record(writer: &mut BufWriter<File>, header: &str, sequence: &str, quality: &str) -> Result<()> {
+pub fn write_fastq_record(
+    writer: &mut BufWriter<File>,
+    header: &str,
+    sequence: &str,
+    quality: &str,
+) -> Result<()> {
     writeln!(writer, "@{}", header)?;
     writeln!(writer, "{}", sequence)?;
     writeln!(writer, "+")?;
@@ -195,15 +211,18 @@ pub fn write_fastq_record(writer: &mut BufWriter<File>, header: &str, sequence: 
     Ok(())
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cigar::ToCigarOps;
 
     fn cuts(cigar: &str, align_start: usize, region_start: usize, region_end: usize) -> ReadCuts {
-        get_read_cuts(&cigar.to_cigar_ops().expect("test CIGAR should be valid"), align_start, region_start, region_end)
+        get_read_cuts(
+            &cigar.to_cigar_ops().expect("test CIGAR should be valid"),
+            align_start,
+            region_start,
+            region_end,
+        )
     }
 
     // --- pure match ---
@@ -312,7 +331,7 @@ mod tests {
         // soft clip: pos advances to 3 without moving ref_pos
         let c = cuts("3S7M", 1, 3, 7);
         assert_eq!(c.read_start, 5); // 3 softclip + 2 match bases to reach ref=3
-        assert_eq!(c.read_end, 9);   // 4 bases in region
+        assert_eq!(c.read_end, 9); // 4 bases in region
     }
 
     // --- hard clip ---
@@ -335,12 +354,19 @@ mod tests {
     }
 }
 
-pub fn extract_from_fasta_coords(fasta_path: &str, chrom: &str, start: usize, end: usize) -> Result<String> {
+pub fn extract_from_fasta_coords(
+    fasta_path: &str,
+    chrom: &str,
+    start: usize,
+    end: usize,
+) -> Result<String> {
     let mut reader = fasta::io::indexed_reader::Builder::default()
         .build_from_path(fasta_path)
         .context("failed to open FASTA file")?;
     let region_str = format!("{}:{}-{}", chrom, start, end);
-    let parsed: noodles::core::Region = region_str.parse().context("invalid FASTA region coordinates")?;
+    let parsed: noodles::core::Region = region_str
+        .parse()
+        .context("invalid FASTA region coordinates")?;
     let sequence: Vec<u8> = reader
         .query(&parsed)
         .context("FASTA region query failed")?

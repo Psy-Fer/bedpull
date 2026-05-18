@@ -1,9 +1,8 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
-use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
-
 
 // TODO: remove this later
 #[allow(dead_code)]
@@ -21,7 +20,7 @@ pub struct PafRecord {
     pub num_matches: usize,
     pub alignment_length: usize,
     pub mapping_quality: u8,
-    pub cigar: Option<String>,  // cg:Z: tag
+    pub cigar: Option<String>, // cg:Z: tag
 }
 
 impl PafRecord {
@@ -33,7 +32,8 @@ impl PafRecord {
         }
 
         // Extract CIGAR from cg tag ("cg:Z:" is 5 bytes)
-        let cigar = fields.iter()
+        let cigar = fields
+            .iter()
             .skip(12)
             .find(|f| f.starts_with("cg:Z:"))
             .map(|f| f[5..].to_string());
@@ -43,7 +43,10 @@ impl PafRecord {
             query_length: fields[1].parse().context("invalid PAF query length")?,
             query_start: fields[2].parse().context("invalid PAF query start")?,
             query_end: fields[3].parse().context("invalid PAF query end")?,
-            strand: fields[4].chars().next().ok_or_else(|| anyhow!("PAF strand field is empty"))?,
+            strand: fields[4]
+                .chars()
+                .next()
+                .ok_or_else(|| anyhow!("PAF strand field is empty"))?,
             target_name: fields[5].to_string(),
             target_length: fields[6].parse().context("invalid PAF target length")?,
             target_start: fields[7].parse().context("invalid PAF target start")?,
@@ -54,10 +57,10 @@ impl PafRecord {
             cigar,
         })
     }
-    
+
     // pub fn overlaps_region(&self, chrom: &str, start: usize, end: usize) -> bool {
-    //     self.target_name == chrom 
-    //         && self.target_start < end 
+    //     self.target_name == chrom
+    //         && self.target_start < end
     //         && self.target_end > start
     // }
 }
@@ -66,8 +69,8 @@ impl PafRecord {
 // Store file offset for each alignment
 #[derive(Debug, Clone)]
 pub struct PafIndexEntry {
-    pub offset: u64,           // file byte offset
-    pub target_start: usize,   // overlap checks can use these
+    pub offset: u64,         // file byte offset
+    pub target_start: usize, // overlap checks can use these
     pub target_end: usize,
 }
 
@@ -82,71 +85,71 @@ impl PafIndex {
             entries: HashMap::new(),
         }
     }
-    
+
     // Build index from PAF file
     pub fn build(paf_path: &str) -> Result<Self> {
         let file = File::open(paf_path)?;
         let mut reader = BufReader::new(file);
         let mut index = PafIndex::new();
-        
+
         let mut offset: u64 = 0;
         let mut line = String::new();
-        
+
         while reader.read_line(&mut line)? > 0 {
             let line_len = line.len() as u64;
-            
+
             if !line.starts_with('#') && !line.is_empty() {
                 let fields: Vec<&str> = line.split('\t').collect();
                 if fields.len() >= 9 {
                     let target_name = fields[5].to_string();
                     let target_start: usize = fields[7].parse()?;
                     let target_end: usize = fields[8].parse()?;
-                    
+
                     let entry = PafIndexEntry {
                         offset,
                         target_start,
                         target_end,
                     };
-                    
-                    index.entries
-                        .entry(target_name)
-                        .or_insert_with(Vec::new)
-                        .push(entry);
+
+                    index.entries.entry(target_name).or_default().push(entry);
                 }
             }
-            
+
             offset += line_len;
             line.clear();
         }
-        
+
         // Sort entries by start position for each chromosome
         for entries in index.entries.values_mut() {
             entries.sort_by_key(|e| e.target_start);
         }
-        
+
         Ok(index)
     }
-    
+
     // Save index to file
     pub fn save(&self, index_path: &str) -> Result<()> {
         let mut file = File::create(index_path)?;
-        
+
         for (chrom, entries) in &self.entries {
             for entry in entries {
-                writeln!(file, "{}\t{}\t{}\t{}", 
-                    chrom, entry.offset, entry.target_start, entry.target_end)?;
+                writeln!(
+                    file,
+                    "{}\t{}\t{}\t{}",
+                    chrom, entry.offset, entry.target_start, entry.target_end
+                )?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     // Load index from file
     pub fn load(index_path: &str) -> Result<Self> {
         let file = File::open(index_path)?;
         let reader = BufReader::new(file);
         let mut index = PafIndex::new();
-        
+
         for line in reader.lines() {
             let line = line?;
             let fields: Vec<&str> = line.split('\t').collect();
@@ -157,21 +160,19 @@ impl PafIndex {
                     target_start: fields[2].parse()?,
                     target_end: fields[3].parse()?,
                 };
-                
-                index.entries
-                    .entry(chrom)
-                    .or_insert_with(Vec::new)
-                    .push(entry);
+
+                index.entries.entry(chrom).or_default().push(entry);
             }
         }
-        
+
         Ok(index)
     }
-    
+
     // Query index for overlapping entries
     pub fn query(&self, chrom: &str, start: usize, end: usize) -> Vec<&PafIndexEntry> {
         if let Some(entries) = self.entries.get(chrom) {
-            entries.iter()
+            entries
+                .iter()
                 .filter(|e| e.target_start < end && e.target_end > start)
                 .collect()
         } else {
@@ -269,11 +270,11 @@ mod tests {
         original.save(idx_path).unwrap();
 
         let loaded = PafIndex::load(idx_path).unwrap();
-        let orig_hits  = original.query("chr1", 120, 130);
-        let load_hits  = loaded.query("chr1", 120, 130);
+        let orig_hits = original.query("chr1", 120, 130);
+        let load_hits = loaded.query("chr1", 120, 130);
         assert_eq!(orig_hits.len(), load_hits.len());
         assert_eq!(orig_hits[0].target_start, load_hits[0].target_start);
-        assert_eq!(orig_hits[0].target_end,   load_hits[0].target_end);
+        assert_eq!(orig_hits[0].target_end, load_hits[0].target_end);
     }
 
     // --- read_paf_record_at_offset ---
@@ -299,10 +300,10 @@ mod tests {
 pub fn read_paf_record_at_offset(paf_path: &str, offset: u64) -> Result<PafRecord> {
     let mut file = File::open(paf_path)?; // can I open this once and move the seek backwards?
     file.seek(SeekFrom::Start(offset))?;
-    
+
     let mut reader = BufReader::new(file);
     let mut line = String::new();
     reader.read_line(&mut line)?;
-    
+
     PafRecord::from_line(&line)
 }
