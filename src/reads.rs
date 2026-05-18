@@ -9,7 +9,7 @@ use crate::utils::{get_read_cuts, ReadCuts};
 pub use crate::cigar::ToCigarOps;
 
 // For bam reading
-pub fn get_bam_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region: &Region) -> Vec<(String, Vec<u8>, String, usize, usize)>{
+pub fn get_bam_reads(_opts: &Opts, query: bam::io::reader::Query<File>, region: &Region, lflank: usize, rflank: usize) -> Vec<(String, Vec<u8>, String, usize, usize)>{
 
     let mut h0_subseq_vec: Vec<(String, Vec<u8>, String, usize, usize)> = vec![]; // no hap assigned
     
@@ -62,21 +62,25 @@ pub fn get_bam_reads(_opts: &Opts, query: bam::io::reader::Query<File> , region:
         //     continue;
         // }
 
-        // filter reads that don't map across the full region
         let region_start = usize::from(region.interval().start().unwrap());
         let region_end = usize::from(region.interval().end().unwrap());
 
-        // Skip reads that don't overlap
-        if (align_end < region_start) || (align_start > region_end) {
-            // eprintln!("{} Doesn't fit in region", name);
-            // eprintln!("A_start/start: {} / {}: {}", align_start, usize::from(region.interval().start().unwrap()), align_start as i64 - usize::from(region.interval().start().unwrap()) as i64);
-            // eprintln!("A_end/end: {} / {}: {}", align_end, usize::from(region.interval().end().unwrap()), align_end as i64 - usize::from(region.interval().end().unwrap()) as i64);
+        // Expand window by flanks; reads overlapping anywhere in the flanked window are included.
+        let desired_start = region_start.saturating_sub(lflank);
+        let desired_end = region_end + rflank;
+
+        if (align_end < desired_start) || (align_start > desired_end) {
             continue;
         }
 
-        // eprintln!("A_start/start: {} / {}: {}", align_start, usize::from(region.interval().start().unwrap()), align_start as i64 - usize::from(region.interval().start().unwrap()) as i64);
-        // eprintln!("A_end/end: {} / {}: {}", align_end, usize::from(region.interval().end().unwrap()), align_end as i64 - usize::from(region.interval().end().unwrap()) as i64);
-        let read_cuts: ReadCuts = get_read_cuts(&cigar, align_start, usize::from(region.interval().start().unwrap()), usize::from(region.interval().end().unwrap()));
+        // Clamp the desired window to this read's alignment span so get_read_cuts stays in bounds.
+        let (eff_start, eff_end) = if lflank == 0 && rflank == 0 {
+            (region_start, region_end)
+        } else {
+            (desired_start.max(align_start), desired_end.min(align_end))
+        };
+
+        let read_cuts: ReadCuts = get_read_cuts(&cigar, align_start, eff_start, eff_end);
         // eprintln!("read_cuts: {:?}", read_cuts);
         if read_cuts.read_end == 0 {
             // eprintln!("{} read_cut end is zero", name);

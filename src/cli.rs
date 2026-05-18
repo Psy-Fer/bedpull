@@ -71,6 +71,18 @@ pub struct Opts {
     /// write fastq (BAM only)
     #[clap(long = "fastq", display_order = 8)]
     pub fastq: bool,
+
+    /// Symmetric reference flank to add on both sides before CIGAR walk (bp)
+    #[clap(long = "flanks", default_value = "0", display_order = 9)]
+    pub flanks: usize,
+
+    /// Left-side reference flank in bp (overrides --flanks for the left side)
+    #[clap(long = "lflank", default_value = "0", display_order = 9)]
+    pub lflank: usize,
+
+    /// Right-side reference flank in bp (overrides --flanks for the right side)
+    #[clap(long = "rflank", default_value = "0", display_order = 9)]
+    pub rflank: usize,
 }
 
 fn quit_with_error(text: &str) {
@@ -103,6 +115,14 @@ pub fn check_inputs_exist(opts: &Opts) {
 }
 
 
+/// Resolve the three flank args into (lflank, rflank).
+/// Per-side values take precedence over the symmetric --flanks shorthand.
+pub fn resolve_flanks(flanks: usize, lflank: usize, rflank: usize) -> (usize, usize) {
+    let left  = if lflank > 0 { lflank } else { flanks };
+    let right = if rflank > 0 { rflank } else { flanks };
+    (left, right)
+}
+
 pub fn check_option_values(_opts: &Opts) {
     // if opts.min_read_count < 1 {
     //     quit_with_error("--min_read_count must be > 0")
@@ -119,3 +139,38 @@ pub fn check_option_values(_opts: &Opts) {
 
 //     opts
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_flanks;
+
+    #[test]
+    fn all_zero_gives_zero() {
+        assert_eq!(resolve_flanks(0, 0, 0), (0, 0));
+    }
+
+    #[test]
+    fn symmetric_flanks_applied_to_both_sides() {
+        assert_eq!(resolve_flanks(100, 0, 0), (100, 100));
+    }
+
+    #[test]
+    fn lflank_overrides_left() {
+        assert_eq!(resolve_flanks(100, 50, 0), (50, 100));
+    }
+
+    #[test]
+    fn rflank_overrides_right() {
+        assert_eq!(resolve_flanks(100, 0, 75), (100, 75));
+    }
+
+    #[test]
+    fn per_side_overrides_both() {
+        assert_eq!(resolve_flanks(100, 30, 40), (30, 40));
+    }
+
+    #[test]
+    fn flanks_zero_per_side_nonzero() {
+        assert_eq!(resolve_flanks(0, 10, 20), (10, 20));
+    }
+}

@@ -9,6 +9,9 @@ keywords = ["bed", "bam", "bioinformatics"]
 license = "MIT"
 categories = ["science", "command-line-utilities"]
 
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies]
 clap = { version = "3.0", features = ["derive", "cargo", "wrap_help"] }
 noodles = {version = "0.66.0", features = ["core", "bam", "sam", "bed", "fasta", "fastq"]}

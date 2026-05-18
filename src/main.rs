@@ -25,6 +25,10 @@ use crate::utils::extract_from_fasta_coords;
 use crate::utils::get_read_cuts;
 use crate::utils::write_fastq_record;
 
+fn effective_flanks(opts: &Opts) -> (usize, usize) {
+    cli::resolve_flanks(opts.flanks, opts.lflank, opts.rflank)
+}
+
 fn main() -> Result<()>{
     let opts: Opts = Opts::parse();
     eprintln!("{:#?}", opts);
@@ -89,7 +93,8 @@ pub fn extract_from_bam(opts: &Opts, regions: Vec<(noodles::core::Region, String
         // find all reads that map to region
         // apply filters (full length, quality, etc)
         // cut out sequence (optionally qstring too and do quality calculation)
-        let overlapping_reads: Vec<(String, Vec<u8>, String, usize, usize)> = get_bam_reads(&opts, query, &region);
+        let (lflank, rflank) = effective_flanks(&opts);
+        let overlapping_reads: Vec<(String, Vec<u8>, String, usize, usize)> = get_bam_reads(&opts, query, &region, lflank, rflank);
         if overlapping_reads.len() == 0 {
             eprintln!("No reads found for region in bam file. Skipping region: {}", region_name);
             continue;
@@ -148,30 +153,33 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
         
         let region_start = usize::from(region.interval().start().unwrap());
         let region_end = usize::from(region.interval().end().unwrap());
+        let (lflank, rflank) = effective_flanks(opts);
 
         // Query index for overlapping entries
         let overlapping_entries = index.query(chr, region_start, region_end);
         eprintln!("Found {} overlapping alignments", overlapping_entries.len());
-        
+
         // TODO: move this stuff to the reads.rs file under get_paf_reads
         // Read actual PAF records from file
         for entry in overlapping_entries {
             let paf_record = read_paf_record_at_offset(paf_path, entry.offset).unwrap();
 
-            // eprintln!("paf_record: {:?}", paf_record);
-            // TODO: actually handle these as partial reads.
-            // check if alignment fully contains the region
+            // Warn only when the core region (not the flanks) isn't fully covered.
             if paf_record.target_start > region_start {
                 eprintln!("Warning: Alignment starts after region start, may be incomplete");
             }
             if paf_record.target_end < region_end {
                 eprintln!("Warning: Alignment ends before region end, may be incomplete");
             }
-            
+
+            // Expand by flanks then clamp to what this alignment actually covers.
+            let eff_start = region_start.saturating_sub(lflank).max(paf_record.target_start);
+            let eff_end = (region_end + rflank).min(paf_record.target_end);
+
             if let Some(cigar_str) = &paf_record.cigar {
                 // Convert CIGAR and calculate query coordinates
                 let cigar_ops = cigar_str.as_str().to_cigar_ops();
-                let cuts = get_read_cuts(&cigar_ops, paf_record.target_start, region_start, region_end);
+                let cuts = get_read_cuts(&cigar_ops, paf_record.target_start, eff_start, eff_end);
                 
                 // Validate cuts
                 if cuts.read_start == 0 && cuts.read_end == 0 {
@@ -206,5 +214,57 @@ pub fn extract_from_paf(opts: &Opts, regions: Vec<(noodles::core::Region, String
                 write_fasta_record(read_writer, &header, &sequence).expect("Failed to write fasta");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::paf::{PafIndex, read_paf_record_at_offset};
+    use crate::utils::get_read_cuts;
+    use crate::cigar::ToCigarOps;
+    use crate::cli::resolve_flanks;
+
+    const PAF_PATH: &str = "examples/hg002pat_to_hs1.rfc1_only.paf";
+
+    // RFC1 BED region: chr4 39318077-39318136 (59 bp reference span)
+    // This alignment has a 520 bp insertion inside the region, so bedpull
+    // should extract 579 bp from the query — see README for context.
+    const RFC1_TARGET_START: usize = 31058861; // PAF field 8  (align_start)
+    const RFC1_REGION_START: usize = 39318077; // BED start
+    const RFC1_REGION_END:   usize = 39318136; // BED end
+    const RFC1_EXPECTED_BP:  usize = 579;
+
+    #[test]
+    fn paf_index_build_finds_rfc1_region() {
+        let idx = PafIndex::build(PAF_PATH).expect("failed to build index");
+        let hits = idx.query("chr4", RFC1_REGION_START, RFC1_REGION_END);
+        assert_eq!(hits.len(), 1, "expected exactly one alignment over RFC1");
+    }
+
+    #[test]
+    fn paf_record_at_offset_zero_parses_correctly() {
+        let r = read_paf_record_at_offset(PAF_PATH, 0).expect("failed to read record");
+        assert_eq!(r.query_name, "chr4_PATERNAL");
+        assert_eq!(r.target_name, "chr4");
+        assert_eq!(r.target_start, RFC1_TARGET_START);
+        assert!(r.cigar.is_some(), "expected cg:Z: tag");
+    }
+
+    #[test]
+    fn get_read_cuts_rfc1_captures_insertion() {
+        let r = read_paf_record_at_offset(PAF_PATH, 0).unwrap();
+        let cigar_str = r.cigar.as_deref().expect("no CIGAR");
+        let ops = cigar_str.to_cigar_ops();
+        let cuts = get_read_cuts(&ops, RFC1_TARGET_START, RFC1_REGION_START, RFC1_REGION_END);
+        let extracted_len = cuts.read_end - cuts.read_start;
+        assert_eq!(
+            extracted_len, RFC1_EXPECTED_BP,
+            "expected {RFC1_EXPECTED_BP} bp (59 bp ref span + 520 bp insertion); got {extracted_len}"
+        );
+    }
+
+    #[test]
+    fn resolve_flanks_zero_is_identity() {
+        assert_eq!(resolve_flanks(0, 0, 0), (0, 0));
     }
 }

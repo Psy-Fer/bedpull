@@ -179,6 +179,121 @@ impl PafIndex {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    const PAF_LINE_A: &str = "q1\t100\t0\t50\t+\tchr1\t1000\t100\t150\t50\t50\t60\tcg:Z:50M";
+    const PAF_LINE_B: &str = "q2\t200\t0\t80\t+\tchr1\t1000\t200\t280\t80\t80\t60\tcg:Z:80M";
+    const PAF_LINE_NO_CIGAR: &str = "q3\t100\t0\t50\t+\tchr2\t1000\t100\t150\t50\t50\t60";
+
+    // --- PafRecord::from_line ---
+
+    #[test]
+    fn parse_record_with_cigar() {
+        let r = PafRecord::from_line(PAF_LINE_A).unwrap();
+        assert_eq!(r.query_name, "q1");
+        assert_eq!(r.query_length, 100);
+        assert_eq!(r.query_start, 0);
+        assert_eq!(r.query_end, 50);
+        assert_eq!(r.strand, '+');
+        assert_eq!(r.target_name, "chr1");
+        assert_eq!(r.target_start, 100);
+        assert_eq!(r.target_end, 150);
+        assert_eq!(r.mapping_quality, 60);
+        assert_eq!(r.cigar.as_deref(), Some("50M"));
+    }
+
+    #[test]
+    fn parse_record_without_cigar() {
+        let r = PafRecord::from_line(PAF_LINE_NO_CIGAR).unwrap();
+        assert!(r.cigar.is_none());
+    }
+
+    #[test]
+    fn parse_record_too_few_fields_is_error() {
+        assert!(PafRecord::from_line("q1\t100\t0").is_err());
+    }
+
+    // --- PafIndex::build + query ---
+
+    fn temp_paf(contents: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "{}", contents).unwrap();
+        f
+    }
+
+    #[test]
+    fn build_and_query_overlapping() {
+        let paf = temp_paf(&format!("{}\n{}\n", PAF_LINE_A, PAF_LINE_B));
+        let idx = PafIndex::build(paf.path().to_str().unwrap()).unwrap();
+        // A: chr1 100-150, B: chr1 200-280
+        let hits = idx.query("chr1", 120, 130);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].target_start, 100);
+    }
+
+    #[test]
+    fn query_no_overlap_returns_empty() {
+        let paf = temp_paf(&format!("{}\n", PAF_LINE_A));
+        let idx = PafIndex::build(paf.path().to_str().unwrap()).unwrap();
+        assert!(idx.query("chr1", 200, 300).is_empty());
+    }
+
+    #[test]
+    fn query_unknown_chrom_returns_empty() {
+        let paf = temp_paf(&format!("{}\n", PAF_LINE_A));
+        let idx = PafIndex::build(paf.path().to_str().unwrap()).unwrap();
+        assert!(idx.query("chrX", 100, 150).is_empty());
+    }
+
+    #[test]
+    fn query_boundary_exclusive() {
+        // target_end=150; query start=150 should NOT overlap (filter: target_end > start)
+        let paf = temp_paf(&format!("{}\n", PAF_LINE_A));
+        let idx = PafIndex::build(paf.path().to_str().unwrap()).unwrap();
+        assert!(idx.query("chr1", 150, 200).is_empty());
+    }
+
+    // --- save / load round-trip ---
+
+    #[test]
+    fn save_and_load_round_trip() {
+        let paf = temp_paf(&format!("{}\n{}\n", PAF_LINE_A, PAF_LINE_B));
+        let idx_file = tempfile::NamedTempFile::new().unwrap();
+        let idx_path = idx_file.path().to_str().unwrap();
+
+        let original = PafIndex::build(paf.path().to_str().unwrap()).unwrap();
+        original.save(idx_path).unwrap();
+
+        let loaded = PafIndex::load(idx_path).unwrap();
+        let orig_hits  = original.query("chr1", 120, 130);
+        let load_hits  = loaded.query("chr1", 120, 130);
+        assert_eq!(orig_hits.len(), load_hits.len());
+        assert_eq!(orig_hits[0].target_start, load_hits[0].target_start);
+        assert_eq!(orig_hits[0].target_end,   load_hits[0].target_end);
+    }
+
+    // --- read_paf_record_at_offset ---
+
+    #[test]
+    fn read_record_at_offset_zero() {
+        let paf = temp_paf(&format!("{}\n{}\n", PAF_LINE_A, PAF_LINE_B));
+        let r = read_paf_record_at_offset(paf.path().to_str().unwrap(), 0).unwrap();
+        assert_eq!(r.query_name, "q1");
+    }
+
+    #[test]
+    fn read_record_at_second_line_offset() {
+        let first_line = format!("{}\n", PAF_LINE_A);
+        let offset = first_line.len() as u64;
+        let paf = temp_paf(&format!("{}{}\n", first_line, PAF_LINE_B));
+        let r = read_paf_record_at_offset(paf.path().to_str().unwrap(), offset).unwrap();
+        assert_eq!(r.query_name, "q2");
+    }
+}
+
 // get the paf record using an index offset
 pub fn read_paf_record_at_offset(paf_path: &str, offset: u64) -> Result<PafRecord, Box<dyn std::error::Error>> {
     let mut file = File::open(paf_path)?; // can I open this once and move the seek backwards?

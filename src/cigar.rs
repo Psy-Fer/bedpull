@@ -47,6 +47,7 @@ impl ToCigarOps for dyn SamCigar {
 }
 // handle cigar from paf
 impl ToCigarOps for &str {
+
     fn to_cigar_ops(&self) -> CigarOps {
         let mut ops = Vec::new();
         let mut num = String::new();
@@ -73,5 +74,65 @@ impl ToCigarOps for &str {
             }
         }
         ops
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(s: &str) -> CigarOps {
+        s.to_cigar_ops()
+    }
+
+    #[test]
+    fn single_match() {
+        let ops = parse("10M");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, Kind::Match);
+        assert_eq!(ops[0].len, 10);
+    }
+
+    #[test]
+    fn all_op_types() {
+        let ops = parse("1M2I3D4N5S6H7P8=9X");
+        let expected = [
+            (Kind::Match, 1),
+            (Kind::Insertion, 2),
+            (Kind::Deletion, 3),
+            (Kind::Skip, 4),
+            (Kind::SoftClip, 5),
+            (Kind::HardClip, 6),
+            (Kind::Pad, 7),
+            (Kind::SequenceMatch, 8),
+            (Kind::SequenceMismatch, 9),
+        ];
+        assert_eq!(ops.len(), expected.len());
+        for (op, (kind, len)) in ops.iter().zip(expected.iter()) {
+            assert_eq!(op.kind, *kind);
+            assert_eq!(op.len, *len);
+        }
+    }
+
+    #[test]
+    fn multi_op_mixed() {
+        let ops = parse("5M2I3D");
+        assert_eq!(ops.len(), 3);
+        assert_eq!(ops[0].len, 5);
+        assert_eq!(ops[1].len, 2);
+        assert_eq!(ops[2].len, 3);
+    }
+
+    #[test]
+    fn large_lengths() {
+        let ops = parse("100000M999I");
+        assert_eq!(ops[0].len, 100000);
+        assert_eq!(ops[1].len, 999);
+    }
+
+    #[test]
+    #[should_panic]
+    fn unknown_op_panics() {
+        parse("5Z");
     }
 }
