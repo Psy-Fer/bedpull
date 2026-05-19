@@ -9,6 +9,14 @@ keywords = ["bed", "bam", "bioinformatics"]
 license = "MIT"
 categories = ["science", "command-line-utilities"]
 
+[lib]
+name = "bedpull"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bedpull"
+path = "src/main.rs"
+
 [dev-dependencies]
 tempfile = "3"
 

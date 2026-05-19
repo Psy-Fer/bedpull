@@ -1,11 +1,11 @@
-mod bed;
-mod cigar;
 mod cli;
-mod paf;
-mod reads;
-mod utils;
 
 use anyhow::{Context, Result};
+use bedpull::paf::PafIndex;
+use bedpull::reads::{BamConfig, get_bam_reads};
+use bedpull::utils::{extract_from_fasta_coords, get_read_cuts, read_bed, write_fasta_record, write_fastq_record};
+use bedpull::ToCigarOps;
+use bedpull::paf::read_paf_record_at_offset;
 use clap::Parser;
 use noodles::bam;
 use std::fs::File;
@@ -14,18 +14,19 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use cli::Opts;
-use paf::PafIndex;
-use reads::get_bam_reads;
-use utils::{read_bed, write_fasta_record};
-
-use crate::paf::read_paf_record_at_offset;
-use crate::reads::ToCigarOps;
-use crate::utils::extract_from_fasta_coords;
-use crate::utils::get_read_cuts;
-use crate::utils::write_fastq_record;
 
 fn effective_flanks(opts: &Opts) -> (usize, usize) {
     cli::resolve_flanks(opts.flanks, opts.lflank, opts.rflank)
+}
+
+fn bam_config(opts: &Opts) -> BamConfig {
+    BamConfig {
+        min_mapq: opts.min_mapq,
+        include_secondary: opts.include_secondary,
+        include_supplementary: opts.include_supplementary,
+        partial: opts.partial,
+        min_region_quality: opts.min_region_quality,
+    }
 }
 
 fn hap_output_path(base: &Path, hap: u8) -> PathBuf {
@@ -59,7 +60,7 @@ fn main() -> Result<()> {
     crate::cli::check_inputs_exist(&opts)?;
 
     eprintln!("Reading bed file");
-    let regions = read_bed(&opts)?;
+    let regions = read_bed(&opts.bed)?;
 
     let output_file = OpenOptions::new()
         .write(true)
@@ -131,7 +132,7 @@ pub fn extract_from_bam(
         // apply filters (full length, quality, etc)
         // cut out sequence (optionally qstring too and do quality calculation)
         let (lflank, rflank) = effective_flanks(opts);
-        let overlapping_reads = get_bam_reads(opts, query, region, lflank, rflank)?;
+        let overlapping_reads = get_bam_reads(&bam_config(opts), query, region, lflank, rflank)?;
         if overlapping_reads.is_empty() {
             eprintln!(
                 "No reads found for region in bam file. Skipping region: {}",
@@ -311,10 +312,10 @@ pub fn extract_from_paf(
 
 #[cfg(test)]
 mod tests {
-    use crate::cigar::ToCigarOps;
+    use bedpull::ToCigarOps;
+    use bedpull::paf::{PafIndex, read_paf_record_at_offset};
+    use bedpull::utils::get_read_cuts;
     use crate::cli::resolve_flanks;
-    use crate::paf::{PafIndex, read_paf_record_at_offset};
-    use crate::utils::get_read_cuts;
 
     const PAF_PATH: &str = "examples/hg002pat_to_hs1.rfc1_only.paf";
 

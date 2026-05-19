@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct BedRecord {
@@ -67,7 +67,7 @@ pub struct BedReader<R: BufRead> {
 }
 
 impl BedReader<BufReader<File>> {
-    pub fn from_path(path: &PathBuf) -> io::Result<Self> {
+    pub fn from_path(path: &Path) -> io::Result<Self> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         Ok(BedReader { reader })

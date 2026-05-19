@@ -6,12 +6,12 @@ use noodles::sam::alignment::record::cigar::op::Kind;
 use std::f64;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::path::Path;
 
 use noodles::core::{Position, Region, region::Interval};
 
 use crate::bed::BedReader;
 use crate::cigar::CigarOps;
-use crate::cli::Opts;
 
 /// Calculate the mean Phred Qscore from a Phred+33 encoded quality string.
 pub fn calculate_qscore(qstring: &str) -> f64 {
@@ -162,9 +162,9 @@ pub fn _get_consensus(reads: &[Vec<u8>]) -> Vec<u8> {
     consensus
 }
 
-pub fn read_bed(opts: &Opts) -> Result<Vec<(Region, String, String)>> {
+pub fn read_bed(path: &Path) -> Result<Vec<(Region, String, String)>> {
     let mut regions: Vec<(Region, String, String)> = vec![];
-    let reader = BedReader::from_path(&opts.bed).context("failed to open BED file")?;
+    let reader = BedReader::from_path(path).context("failed to open BED file")?;
     for record in reader {
         match record {
             Ok(record) => {
