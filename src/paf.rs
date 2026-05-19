@@ -4,26 +4,50 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::io::{Seek, SeekFrom};
 
+/// A parsed record from a PAF (Pairwise mApping Format) alignment file.
+///
+/// Fields correspond 1-to-1 with the 12 mandatory PAF columns. The `cigar` field
+/// is populated from the optional `cg:Z:` tag; it is `None` for alignments that
+/// were run without `--cs`/`--eqx` or that do not emit a full CIGAR. bedpull
+/// requires a CIGAR to perform coordinate-accurate extraction; records without
+/// one are skipped with a warning.
 // TODO: remove this later
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PafRecord {
+    /// Name of the query sequence (PAF column 1).
     pub query_name: String,
+    /// Total length of the query sequence in bp (PAF column 2).
     pub query_length: usize,
+    /// 0-based start of the aligned block on the query (PAF column 3).
     pub query_start: usize,
+    /// 0-based, exclusive end of the aligned block on the query (PAF column 4).
     pub query_end: usize,
+    /// Strand of the alignment relative to the target: `'+'` or `'-'` (PAF column 5).
     pub strand: char,
+    /// Name of the target (reference) sequence (PAF column 6).
     pub target_name: String,
+    /// Total length of the target sequence in bp (PAF column 7).
     pub target_length: usize,
+    /// 0-based start of the aligned block on the target (PAF column 8).
     pub target_start: usize,
+    /// 0-based, exclusive end of the aligned block on the target (PAF column 9).
     pub target_end: usize,
+    /// Number of matching bases in the alignment (PAF column 10).
     pub num_matches: usize,
+    /// Total number of bases (including gaps) in the alignment block (PAF column 11).
     pub alignment_length: usize,
+    /// Mapping quality score, 255 if unavailable (PAF column 12).
     pub mapping_quality: u8,
-    pub cigar: Option<String>, // cg:Z: tag
+    /// Full CIGAR string from the `cg:Z:` optional tag, if present.
+    pub cigar: Option<String>,
 }
 
 impl PafRecord {
+    /// Parse a single tab-delimited PAF line into a [`PafRecord`].
+    ///
+    /// Returns an error if the line has fewer than 12 fields or if any
+    /// mandatory numeric field cannot be parsed.
     pub fn from_line(line: &str) -> Result<Self> {
         let fields: Vec<&str> = line.split('\t').collect();
 
@@ -65,17 +89,35 @@ impl PafRecord {
     // }
 }
 
-// paf indexing
-// Store file offset for each alignment
+/// A single entry in a [`PafIndex`], recording where one alignment record lives on disk.
+///
+/// Storing `target_start` and `target_end` alongside the byte offset allows
+/// [`PafIndex::query`] to filter by genomic interval without seeking to and
+/// parsing each record.
 #[derive(Debug, Clone)]
 pub struct PafIndexEntry {
-    pub offset: u64,         // file byte offset
-    pub target_start: usize, // overlap checks can use these
+    /// Byte offset from the start of the PAF file to the beginning of this record's line.
+    pub offset: u64,
+    /// 0-based start of the alignment on the target (reference) sequence.
+    pub target_start: usize,
+    /// 0-based, exclusive end of the alignment on the target sequence.
     pub target_end: usize,
 }
 
+/// A byte-offset index over a PAF file, partitioned by target chromosome.
+///
+/// The index maps each chromosome name to a list of [`PafIndexEntry`] values sorted
+/// by `target_start`. Building the index requires a single linear pass over the PAF
+/// file; subsequent region queries are O(n) in the number of entries on that
+/// chromosome but avoid re-reading or re-parsing the entire file because only the
+/// matching records are seeked to with [`read_paf_record_at_offset`].
+///
+/// The on-disk format is a plain TSV (`<paf>.idx`):
+/// ```text
+/// <chrom>\t<byte_offset>\t<target_start>\t<target_end>
+/// ```
 pub struct PafIndex {
-    // chromosome: sorted list of index entries
+    /// Per-chromosome lists of index entries, sorted by `target_start`.
     pub entries: HashMap<String, Vec<PafIndexEntry>>,
 }
 
@@ -86,7 +128,12 @@ impl PafIndex {
         }
     }
 
-    // Build index from PAF file
+    /// Build a [`PafIndex`] by scanning the PAF file at `paf_path`.
+    ///
+    /// Reads the file line by line, recording the byte offset of each alignment
+    /// record along with its target coordinates. Entries are sorted by
+    /// `target_start` per chromosome before returning. Returns an error if the
+    /// file cannot be opened or if target coordinate fields cannot be parsed.
     pub fn build(paf_path: &str) -> Result<Self> {
         let file = File::open(paf_path)?;
         let mut reader = BufReader::new(file);
@@ -127,7 +174,11 @@ impl PafIndex {
         Ok(index)
     }
 
-    // Save index to file
+    /// Persist the index to a TSV file at `index_path`.
+    ///
+    /// Each line has the format `<chrom>\t<offset>\t<target_start>\t<target_end>`.
+    /// The file can be reloaded with [`PafIndex::load`]. Returns an error if the
+    /// file cannot be created or written.
     pub fn save(&self, index_path: &str) -> Result<()> {
         let mut file = File::create(index_path)?;
 
@@ -144,7 +195,12 @@ impl PafIndex {
         Ok(())
     }
 
-    // Load index from file
+    /// Load a previously saved index from `index_path`.
+    ///
+    /// Reads the TSV written by [`PafIndex::save`] and reconstructs the in-memory
+    /// index. Note that the loaded index is not re-sorted; the saved file is
+    /// assumed to be ordered correctly. Returns an error if the file cannot be
+    /// read or if any field cannot be parsed.
     pub fn load(index_path: &str) -> Result<Self> {
         let file = File::open(index_path)?;
         let reader = BufReader::new(file);
@@ -168,7 +224,11 @@ impl PafIndex {
         Ok(index)
     }
 
-    // Query index for overlapping entries
+    /// Return all index entries whose alignment overlaps `[start, end)` on `chrom`.
+    ///
+    /// Uses the standard half-open overlap test: `entry.target_start < end && entry.target_end > start`.
+    /// Returns an empty `Vec` if the chromosome is not present in the index.
+    /// The returned references are valid for the lifetime of `self`.
     pub fn query(&self, chrom: &str, start: usize, end: usize) -> Vec<&PafIndexEntry> {
         if let Some(entries) = self.entries.get(chrom) {
             entries
@@ -296,7 +356,12 @@ mod tests {
     }
 }
 
-// get the paf record using an index offset
+/// Seek to `offset` bytes into `paf_path` and parse the line there as a [`PafRecord`].
+///
+/// This is the complement of the index: given a [`PafIndexEntry::offset`] returned
+/// by [`PafIndex::query`], this function retrieves the full record without scanning
+/// the entire file. Returns an error if the file cannot be opened, the seek fails,
+/// or the line cannot be parsed.
 pub fn read_paf_record_at_offset(paf_path: &str, offset: u64) -> Result<PafRecord> {
     let mut file = File::open(paf_path)?; // can I open this once and move the seek backwards?
     file.seek(SeekFrom::Start(offset))?;

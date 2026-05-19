@@ -1,0 +1,8 @@
+[book]
+title = "bedpull"
+authors = ["James M. Ferguson"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/Psy-Fer/bedpull"

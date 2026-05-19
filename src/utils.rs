@@ -12,7 +12,13 @@ use noodles::core::{Position, Region, region::Interval};
 use crate::bed::BedReader;
 use crate::cigar::CigarOps;
 
-/// Calculate the mean Phred Qscore from a Phred+33 encoded quality string.
+/// Calculate the mean Phred score from a Phred+33 encoded quality string.
+///
+/// Each character in `qstring` is interpreted as `ASCII value − 33` to recover the
+/// per-base Phred score. The mean is computed in error-probability space (i.e.
+/// `mean(10^(−Q/10))`) and then converted back to a single Phred score, which is
+/// the statistically correct average. The result is clamped so that a mean error
+/// probability of 1.0 (all bases at Q0) returns `0.0` rather than `-inf`.
 pub fn calculate_qscore(qstring: &str) -> f64 {
     // Convert phred back to ASCII values and adjust -33
     let qs: Vec<f64> = qstring.chars().map(|c| (c as u8) as f64 - 33.0).collect();
@@ -29,21 +35,65 @@ pub fn calculate_qscore(qstring: &str) -> f64 {
 
     score
 }
-/// ReadCuts is a struct that holds read subsequence positions
-/// use this to cut out a subsequence of a read
+/// Read-coordinate slice produced by [`get_read_cuts`] for a single alignment.
+///
+/// All positions are 0-based indices into the read sequence array. `ref_start` /
+/// `ref_end` are the actual reference positions reached during the CIGAR walk and
+/// may differ slightly from the requested BED coordinates when a region boundary
+/// falls inside a deletion or at the very end of a CIGAR op.
 #[derive(Debug, Clone)]
 pub struct ReadCuts {
+    /// Index of the first read base that corresponds to `region_start` in the
+    /// reference. Use as the start of a slice into the read sequence: `seq[read_start..read_end]`.
     pub read_start: usize,
+    /// Index one past the last read base that corresponds to `region_end`.
+    /// A value of `0` is a sentinel meaning the region end was never reached
+    /// (right-partial overlap or no overlap at all).
     pub read_end: usize,
-    pub ref_start: usize, // reference position
+    /// The reference position at which `read_start` was set during the CIGAR walk.
+    pub ref_start: usize,
+    /// The reference position at which `read_end` was set during the CIGAR walk.
     pub ref_end: usize,
 }
 
-/// get_read_cuts takes a cigar string, alignment_start, target region, and padding amount
-/// It returns a ReadCuts struct with the read_start and read_end
-/// This can be used to cut out a substring of the read sequence matching the target region
-/// Assumes read has full coverage of region
-/// TODO: Allow for partial overlaps with flags.
+/// Walk a CIGAR string to find the read-coordinate slice for a reference region.
+///
+/// This is the core of bedpull's CIGAR-aware extraction. It simultaneously
+/// tracks `ref_pos` (the current reference position) and `pos` (the current
+/// read position) as it steps through each CIGAR operation. When `ref_pos`
+/// reaches `region_start` the read position is recorded as `read_start`; when
+/// it reaches `region_end` the position is recorded as `read_end`. Insertions
+/// advance `pos` without advancing `ref_pos`, so inserted bases that fall
+/// between `region_start` and `region_end` are automatically included in the
+/// slice — they have no reference coordinate but are captured because the
+/// surrounding match ops bracket them.
+///
+/// ## Coordinate convention (critical)
+///
+/// `align_start` is **1-based** (as returned by noodles from a BAM record or
+/// read from a PAF `target_start` field after adjustment). `region_start` and
+/// `region_end` are **0-based** (directly from the BED file). This mixed
+/// convention is intentional: it matches the existing behaviour that the tests
+/// are written against. Do not normalise both to the same base — it will shift
+/// every boundary by one.
+///
+/// ## Partial-overlap sentinel values
+///
+/// When the alignment starts after `region_start` (left-partial or contained
+/// read), the `region_start` trigger never fires. If `region_end` is
+/// subsequently reached, the position is stored in `read_start` (because
+/// `start == 0`), and `read_end` remains `0`. [`get_bam_reads`][crate::reads::get_bam_reads]
+/// detects this pattern when `partial` mode is enabled and interprets the
+/// fields accordingly.
+///
+/// # Parameters
+///
+/// - `cigar_ops` — the decoded CIGAR for this alignment.
+/// - `align_start` — 1-based reference position where the alignment begins
+///   (from the BAM `alignment_start` field or the PAF `target_start` field).
+/// - `region_start` — 0-based start of the BED region to extract.
+/// - `region_end` — 0-based end of the BED region to extract (exclusive in BED
+///   convention, but the CIGAR walk treats it as the last position to fire on).
 pub fn get_read_cuts(
     cigar_ops: &CigarOps,
     align_start: usize,
@@ -161,6 +211,14 @@ pub fn _get_consensus(reads: &[Vec<u8>]) -> Vec<u8> {
     consensus
 }
 
+/// Parse a BED file and return a list of `(region, name, chromosome)` triples.
+///
+/// Reads 3- or 4-column BED format via [`crate::bed::BedReader`]. The
+/// returned `Region` uses a noodles 1-based closed interval (BED `start` is
+/// promoted with `Position::try_from`). The `name` field comes from the optional
+/// 4th column; if absent it defaults to `"chrom:start-end"`. The `chromosome`
+/// string is the raw first column, kept separately so callers can use it as a
+/// plain string key (e.g. for PAF index lookups) without parsing the `Region`.
 pub fn read_bed(path: &Path) -> Result<Vec<(Region, String, String)>> {
     let mut regions: Vec<(Region, String, String)> = vec![];
     let reader = BedReader::from_path(path).context("failed to open BED file")?;
@@ -185,12 +243,21 @@ pub fn read_bed(path: &Path) -> Result<Vec<(Region, String, String)>> {
     Ok(regions)
 }
 
+/// Write a single FASTA record to `writer`.
+///
+/// Outputs `>header\nsequence\n`. No line-wrapping is applied; the sequence is
+/// written as a single line. Returns an error if the underlying write fails.
 pub fn write_fasta_record<W: Write>(writer: &mut W, header: &str, sequence: &str) -> Result<()> {
     writeln!(writer, ">{}", header)?;
     writeln!(writer, "{}", sequence)?;
     Ok(())
 }
 
+/// Write a single FASTQ record to `writer`.
+///
+/// Outputs the standard four-line FASTQ format: `@header`, sequence, `+`, quality.
+/// `quality` must be a Phred+33 encoded string of the same length as `sequence`.
+/// Returns an error if the underlying write fails.
 pub fn write_fastq_record<W: Write>(
     writer: &mut W,
     header: &str,
@@ -471,6 +538,13 @@ mod tests {
     }
 }
 
+/// Extract a subsequence from an indexed FASTA file.
+///
+/// Opens the FASTA at `fasta_path` (requires a companion `.fai` index) and queries
+/// the region `chrom:start-end`. Coordinates are 0-based and are forwarded
+/// directly to noodles via a region string. Returns the sequence as a `String`
+/// of ASCII nucleotides, or an error if the file cannot be opened, the region
+/// is out of bounds, or the bytes are not valid UTF-8.
 pub fn extract_from_fasta_coords(
     fasta_path: &str,
     chrom: &str,

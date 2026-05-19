@@ -50,7 +50,7 @@ impl BedRecord {
 ///
 /// Additionally, it can contain the following optional fields:
 ///
-/// 4. `name` - Name (Option<String>) the name of the repeat region
+/// 4. `name` - Name (`Option<String>`) the name of the repeat region
 ///
 /// Empty fields can be set to None with a dot: `.`
 ///

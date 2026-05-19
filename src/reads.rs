@@ -8,13 +8,36 @@ pub use crate::cigar::ToCigarOps;
 use crate::utils::{ReadCuts, calculate_qscore, get_read_cuts};
 
 /// Filter and extraction settings for BAM reads.
+///
 /// This is the library equivalent of the CLI `Opts` fields that affect BAM extraction.
+/// Construct with [`BamConfig::default`] for permissive defaults (no filters, spanning
+/// reads only), then override individual fields as needed.
 #[derive(Debug, Clone)]
 pub struct BamConfig {
+    /// Minimum mapping quality (MAPQ) a read must have to be included.
+    /// Reads whose MAPQ is below this threshold are skipped. Default: `0` (no filter).
     pub min_mapq: u8,
+
+    /// Whether to include secondary alignments (SAM flag `0x100`).
+    /// Default: `false` (secondary alignments are skipped).
     pub include_secondary: bool,
+
+    /// Whether to include supplementary alignments (SAM flag `0x800`).
+    /// Default: `false` (supplementary alignments are skipped).
     pub include_supplementary: bool,
+
+    /// Whether to include reads that only partially overlap the BED region.
+    /// When `false` (the default), only reads whose alignment spans the entire
+    /// region — from `region_start` to `region_end` — are returned. When `true`,
+    /// reads that overlap any part of the region are included; the extracted
+    /// subsequence is clipped to whatever portion the read covers.
     pub partial: bool,
+
+    /// Minimum mean Phred quality of the extracted subsequence.
+    /// After the CIGAR walk, the quality string of the extracted slice is scored
+    /// with [`crate::utils::calculate_qscore`]; reads below this
+    /// threshold are discarded. Default: `0.0` (no filter). Only meaningful when
+    /// quality scores are present (BAM input with `--fastq`).
     pub min_region_quality: f64,
 }
 
@@ -30,10 +53,46 @@ impl Default for BamConfig {
     }
 }
 
-/// (name, sequence, quality_string, ref_start, ref_end, haplotype)
-/// haplotype is the HP tag value (0 = unphased / tag absent)
+/// A single BAM read after CIGAR-aware extraction.
+///
+/// The tuple fields are `(name, sequence, quality_string, ref_start, ref_end, haplotype)`.
+///
+/// - `name` — read name from the BAM record.
+/// - `sequence` — the extracted subsequence as raw bytes (ASCII nucleotides).
+/// - `quality_string` — Phred+33 encoded quality string for the extracted slice.
+/// - `ref_start` / `ref_end` — the reference coordinates actually covered by the
+///   extracted slice (may differ from the requested BED coordinates when the alignment
+///   does not perfectly span the region boundary).
+/// - `haplotype` — value of the `HP` aux tag; `0` means the tag was absent (unphased).
 pub type BamRead = (String, Vec<u8>, String, usize, usize, u8);
 
+/// Extract subsequences from all BAM reads that overlap a given region.
+///
+/// Iterates `query` (a BAM region query result), applies the filters defined in
+/// `config`, performs a CIGAR walk via [`crate::utils::get_read_cuts`]
+/// to find the exact read-coordinate slice that corresponds to the reference region
+/// (expanded by `lflank` / `rflank` bp on each side), and returns one [`BamRead`]
+/// per passing read.
+///
+/// # Parameters
+///
+/// - `config` — filter and extraction settings; see [`BamConfig`].
+/// - `query` — an open BAM region query produced by
+///   `bam::io::IndexedReader::query`. Consumed by this function.
+/// - `region` — the target region (0-based BED coordinates encoded as a noodles
+///   `noodles::core::Region`; the interval bounds are read from
+///   `region.interval()`).
+/// - `lflank` — number of reference base pairs to extend the extraction window to
+///   the left of `region_start`. Useful for capturing insertions that sit just
+///   outside the annotated BED boundary.
+/// - `rflank` — same as `lflank` but for the right side of `region_end`.
+///
+/// # Partial-overlap semantics
+///
+/// `get_read_cuts` signals a partial overlap through the values of `read_start` /
+/// `read_end` (see that function's documentation). When `config.partial` is `true`,
+/// this function interprets those sentinel values and slices the read from the
+/// beginning or to the end of the sequence as appropriate.
 pub fn get_bam_reads<R>(
     config: &BamConfig,
     query: bam::io::reader::Query<R>,
