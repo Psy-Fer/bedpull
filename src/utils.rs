@@ -4,8 +4,7 @@ use bio::alignment::poa::Aligner as poAligner;
 use noodles::fasta;
 use noodles::sam::alignment::record::cigar::op::Kind;
 use std::f64;
-use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::Path;
 
 use noodles::core::{Position, Region, region::Interval};
@@ -186,20 +185,14 @@ pub fn read_bed(path: &Path) -> Result<Vec<(Region, String, String)>> {
     Ok(regions)
 }
 
-// write a fasta record
-pub fn write_fasta_record(
-    writer: &mut BufWriter<File>,
-    header: &str,
-    sequence: &str,
-) -> Result<()> {
+pub fn write_fasta_record<W: Write>(writer: &mut W, header: &str, sequence: &str) -> Result<()> {
     writeln!(writer, ">{}", header)?;
     writeln!(writer, "{}", sequence)?;
     Ok(())
 }
 
-// write a fastq record
-pub fn write_fastq_record(
-    writer: &mut BufWriter<File>,
+pub fn write_fastq_record<W: Write>(
+    writer: &mut W,
     header: &str,
     sequence: &str,
     quality: &str,
@@ -215,6 +208,98 @@ pub fn write_fastq_record(
 mod tests {
     use super::*;
     use crate::cigar::ToCigarOps;
+    use std::io::Write;
+
+    // --- calculate_qscore ---
+
+    #[test]
+    fn uniform_phred40_gives_40() {
+        // 'I' = ASCII 73, Phred 40
+        let q: String = std::iter::repeat('I').take(10).collect();
+        assert!((calculate_qscore(&q) - 40.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn uniform_phred0_gives_0() {
+        // '!' = ASCII 33, Phred 0 → mean_error clamped to 1e-4, score = 40
+        // Actually Phred 0 → error = 1.0 → mean_error = 1.0 → score = 0.0
+        let score = calculate_qscore("!");
+        assert!((score - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn mixed_quality_is_between_extremes() {
+        let q: String = ['!', 'I'].iter().collect(); // Phred 0 and 40
+        let score = calculate_qscore(&q);
+        assert!(score > 0.0 && score < 40.0);
+    }
+
+    // --- write_fasta_record ---
+
+    #[test]
+    fn fasta_record_format() {
+        let mut buf = Vec::new();
+        write_fasta_record(&mut buf, "read1|chr1:100-200|region", "ACGT").unwrap();
+        assert_eq!(
+            String::from_utf8(buf).unwrap(),
+            ">read1|chr1:100-200|region\nACGT\n"
+        );
+    }
+
+    #[test]
+    fn fasta_empty_sequence() {
+        let mut buf = Vec::new();
+        write_fasta_record(&mut buf, "h", "").unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), ">h\n\n");
+    }
+
+    // --- write_fastq_record ---
+
+    #[test]
+    fn fastq_record_format() {
+        let mut buf = Vec::new();
+        write_fastq_record(&mut buf, "read1", "ACGT", "IIII").unwrap();
+        assert_eq!(
+            String::from_utf8(buf).unwrap(),
+            "@read1\nACGT\n+\nIIII\n"
+        );
+    }
+
+    // --- read_bed ---
+
+    fn temp_bed(contents: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "{}", contents).unwrap();
+        f
+    }
+
+    #[test]
+    fn read_bed_three_column() {
+        let f = temp_bed("chr1\t100\t200\n");
+        let regions = read_bed(f.path()).unwrap();
+        assert_eq!(regions.len(), 1);
+        let (_, name, chr) = &regions[0];
+        assert_eq!(chr, "chr1");
+        // no 4th column → fallback name includes coords
+        assert!(name.contains("chr1"));
+    }
+
+    #[test]
+    fn read_bed_four_column_name() {
+        let f = temp_bed("chr4\t39318077\t39318136\tRFC1\n");
+        let regions = read_bed(f.path()).unwrap();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].1, "RFC1");
+        assert_eq!(regions[0].2, "chr4");
+    }
+
+    #[test]
+    fn read_bed_multiple_regions() {
+        let f = temp_bed("chr1\t100\t200\nchr2\t300\t400\tFOO\n");
+        let regions = read_bed(f.path()).unwrap();
+        assert_eq!(regions.len(), 2);
+        assert_eq!(regions[1].1, "FOO");
+    }
 
     fn cuts(cigar: &str, align_start: usize, region_start: usize, region_end: usize) -> ReadCuts {
         get_read_cuts(

@@ -197,3 +197,34 @@ where
 
     Ok(h0_subseq_vec)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bam_config_default_has_no_filters() {
+        let c = BamConfig::default();
+        assert_eq!(c.min_mapq, 0);
+        assert!(!c.include_secondary);
+        assert!(!c.include_supplementary);
+        assert!(!c.partial);
+        assert_eq!(c.min_region_quality, 0.0);
+    }
+
+    #[test]
+    fn bam_config_custom_values() {
+        let c = BamConfig {
+            min_mapq: 20,
+            include_secondary: true,
+            include_supplementary: false,
+            partial: true,
+            min_region_quality: 15.0,
+        };
+        assert_eq!(c.min_mapq, 20);
+        assert!(c.include_secondary);
+        assert!(!c.include_supplementary);
+        assert!(c.partial);
+        assert_eq!(c.min_region_quality, 15.0);
+    }
+}
