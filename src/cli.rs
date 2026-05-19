@@ -112,6 +112,10 @@ pub struct Opts {
     #[clap(long = "partial", display_order = 9)]
     pub partial: bool,
 
+    /// Minimum mean Phred quality of the extracted region to include a read (BAM --fastq only; 0 = no filter)
+    #[clap(long = "min_region_quality", default_value = "0", display_order = 10)]
+    pub min_region_quality: f64,
+
     /// Symmetric reference flank to add on both sides before CIGAR walk (bp)
     #[clap(long = "flanks", default_value = "0", display_order = 9)]
     pub flanks: usize,
@@ -162,6 +166,9 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
     if opts.fastq && opts.bam.to_str() == Some("None") {
         bail!("--fastq requires --bam");
     }
+    if opts.min_region_quality > 0.0 && opts.bam.to_str() == Some("None") {
+        bail!("--min_region_quality requires --bam (quality scores are only available from BAM input)");
+    }
     Ok(())
 }
 
@@ -197,6 +204,7 @@ mod tests {
             flanks: 0,
             lflank: 0,
             rflank: 0,
+            min_region_quality: 0.0,
         }
     }
 

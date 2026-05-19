@@ -6,7 +6,7 @@ use noodles::core::Region;
 use noodles::sam::alignment::Record;
 
 pub use crate::cigar::ToCigarOps;
-use crate::utils::{ReadCuts, get_read_cuts};
+use crate::utils::{ReadCuts, calculate_qscore, get_read_cuts};
 
 /// (name, sequence, quality_string, ref_start, ref_end)
 pub type BamRead = (String, Vec<u8>, String, usize, usize);
@@ -124,10 +124,12 @@ where
         } else {
             (read_cuts.read_start, read_cuts.read_end)
         };
-        eprintln!("----------------------------------------------------------");
         let subseq = i_seq[read_start..read_end].to_vec();
-        let subqual: String =
-            quality_scores_str[read_start..read_end].to_string();
+        let subqual: String = quality_scores_str[read_start..read_end].to_string();
+
+        if opts.min_region_quality > 0.0 && calculate_qscore(&subqual) < opts.min_region_quality {
+            continue;
+        }
         // let subseq_str = String::from_utf8(subseq.to_vec()).expect("unexpected utf8 in sequence");
         // let subqual_str: String = String::from_utf8_lossy(&subqual).into_owned();
         // let subseq_align_span: isize = (read_cuts.ref_end as isize).saturating_sub(read_cuts.ref_start as isize);

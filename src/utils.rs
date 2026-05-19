@@ -13,8 +13,8 @@ use crate::bed::BedReader;
 use crate::cigar::CigarOps;
 use crate::cli::Opts;
 
-/// Calculate the mean Qscore from a Qstring.
-pub fn _calculate_qscore(qstring: &str) -> f64 {
+/// Calculate the mean Phred Qscore from a Phred+33 encoded quality string.
+pub fn calculate_qscore(qstring: &str) -> f64 {
     // Convert phred back to ASCII values and adjust -33
     let qs: Vec<f64> = qstring.chars().map(|c| (c as u8) as f64 - 33.0).collect();
 
