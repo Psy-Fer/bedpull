@@ -11,6 +11,7 @@ use noodles::bam;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufWriter;
+use std::path::{Path, PathBuf};
 
 use cli::Opts;
 use paf::PafIndex;
@@ -25,6 +26,30 @@ use crate::utils::write_fastq_record;
 
 fn effective_flanks(opts: &Opts) -> (usize, usize) {
     cli::resolve_flanks(opts.flanks, opts.lflank, opts.rflank)
+}
+
+fn hap_output_path(base: &Path, hap: u8) -> PathBuf {
+    let mut name = base
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    name.push_str(&format!(".h{hap}"));
+    if let Some(ext) = base.extension() {
+        name.push('.');
+        name.push_str(&ext.to_string_lossy());
+    }
+    base.parent().unwrap_or(Path::new(".")).join(name)
+}
+
+fn open_writer(path: &Path) -> Result<BufWriter<File>> {
+    let f = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .with_context(|| format!("failed to open output file: {}", path.display()))?;
+    Ok(BufWriter::new(f))
 }
 
 fn main() -> Result<()> {
@@ -73,7 +98,16 @@ pub fn extract_from_bam(
     regions: Vec<(noodles::core::Region, String, String)>,
     read_writer: &mut BufWriter<File>,
 ) -> Result<()> {
-    // for region in bed
+    // Open per-haplotype writers when --hap_split is set.
+    let mut hap_writers: Option<[BufWriter<File>; 3]> = None;
+    if opts.hap_split {
+        hap_writers = Some([
+            open_writer(&hap_output_path(&opts.output, 0))?,
+            open_writer(&hap_output_path(&opts.output, 1))?,
+            open_writer(&hap_output_path(&opts.output, 2))?,
+        ]);
+    }
+
     for (region, region_name, chr) in regions.iter() {
         eprintln!("===============================");
         eprintln!("Analysing region: {}, {}", region, region_name);
@@ -108,26 +142,32 @@ pub fn extract_from_bam(
         let region_start = usize::from(region.interval().start().unwrap());
         let region_end = usize::from(region.interval().end().unwrap());
         // write to fasta or fastq
-        for (name, subseq, subqual, _ref_start, _ref_end) in overlapping_reads {
+        for (name, subseq, subqual, _ref_start, _ref_end, hap) in overlapping_reads {
             let head = format!(
                 "{}|{}:{:?}-{:?}|{}",
                 name, chr, region_start, region_end, region_name
             );
+            let seq_str =
+                std::str::from_utf8(&subseq).context("BAM sequence contains invalid UTF-8")?;
+            let writer: &mut BufWriter<File> = match hap_writers.as_mut() {
+                Some(writers) => match hap {
+                    1 => &mut writers[1],
+                    2 => &mut writers[2],
+                    _ => {
+                        if hap > 2 {
+                            eprintln!("Warning: unexpected HP tag value {hap}, routing to h0");
+                        }
+                        &mut writers[0]
+                    }
+                },
+                None => read_writer,
+            };
             if opts.fastq {
-                write_fastq_record(
-                    read_writer,
-                    &head,
-                    std::str::from_utf8(&subseq).context("BAM sequence contains invalid UTF-8")?,
-                    &subqual,
-                )
-                .context("failed to write FASTQ record")?;
+                write_fastq_record(writer, &head, seq_str, &subqual)
+                    .context("failed to write FASTQ record")?;
             } else {
-                write_fasta_record(
-                    read_writer,
-                    &head,
-                    std::str::from_utf8(&subseq).context("BAM sequence contains invalid UTF-8")?,
-                )
-                .context("failed to write FASTA record")?;
+                write_fasta_record(writer, &head, seq_str)
+                    .context("failed to write FASTA record")?;
             }
         }
         // if consensus: generate consensus

@@ -116,6 +116,10 @@ pub struct Opts {
     #[clap(long = "min_region_quality", default_value = "0", display_order = 10)]
     pub min_region_quality: f64,
 
+    /// Split output by haplotype HP tag into separate files (BAM only; reads without HP tag go to h0)
+    #[clap(long = "hap_split", display_order = 11)]
+    pub hap_split: bool,
+
     /// Symmetric reference flank to add on both sides before CIGAR walk (bp)
     #[clap(long = "flanks", default_value = "0", display_order = 9)]
     pub flanks: usize,
@@ -205,6 +209,7 @@ mod tests {
             lflank: 0,
             rflank: 0,
             min_region_quality: 0.0,
+            hap_split: false,
         }
     }
 
