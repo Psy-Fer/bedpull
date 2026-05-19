@@ -3,7 +3,7 @@ mod cli;
 use anyhow::{Context, Result};
 use bedpull::paf::PafIndex;
 use bedpull::reads::{BamConfig, get_bam_reads};
-use bedpull::utils::{extract_from_fasta_coords, get_read_cuts, read_bed, write_fasta_record, write_fastq_record};
+use bedpull::utils::{extract_from_fasta_coords, get_read_cuts, read_bed, revcomp, write_fasta_record, write_fastq_record};
 use bedpull::ToCigarOps;
 use bedpull::paf::read_paf_record_at_offset;
 use clap::Parser;
@@ -271,13 +271,25 @@ pub fn extract_from_paf(
                     continue;
                 }
 
-                // Calculate actual query coordinates
-                let query_start = paf_record.query_start + cuts.read_start;
-                let query_end = paf_record.query_start + cuts.read_end;
+                // Calculate actual query coordinates.
+                // For '+' strand: cuts are offsets from paf_record.query_start.
+                // For '-' strand: cuts are offsets into the reverse-complemented query,
+                // so we flip them relative to paf_record.query_end.
+                let (query_start, query_end) = if paf_record.strand == '+' {
+                    (
+                        paf_record.query_start + cuts.read_start,
+                        paf_record.query_start + cuts.read_end,
+                    )
+                } else {
+                    (
+                        paf_record.query_end.saturating_sub(cuts.read_end),
+                        paf_record.query_end.saturating_sub(cuts.read_start),
+                    )
+                };
 
                 eprintln!(
-                    "Query coords: {}:{}-{}",
-                    paf_record.query_name, query_start, query_end
+                    "Query coords: {}:{}-{} (strand {})",
+                    paf_record.query_name, query_start, query_end, paf_record.strand
                 );
 
                 // Extract from query FASTA
@@ -290,6 +302,14 @@ pub fn extract_from_paf(
                 .with_context(|| {
                     format!("failed to extract sequence for {}", paf_record.query_name)
                 })?;
+
+                // Reverse-complement for minus-strand alignments so the output is
+                // always in the reference (target) orientation.
+                let sequence = if paf_record.strand == '-' {
+                    revcomp(&sequence)
+                } else {
+                    sequence
+                };
 
                 // Write fasta output
                 let header = format!(

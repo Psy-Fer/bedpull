@@ -271,6 +271,35 @@ pub fn write_fastq_record<W: Write>(
     Ok(())
 }
 
+fn complement_base(b: u8) -> u8 {
+    match b {
+        b'A' => b'T', b'a' => b't',
+        b'T' => b'A', b't' => b'a',
+        b'G' => b'C', b'g' => b'c',
+        b'C' => b'G', b'c' => b'g',
+        b'N' => b'N', b'n' => b'n',
+        b'R' => b'Y', b'r' => b'y',
+        b'Y' => b'R', b'y' => b'r',
+        b'S' => b'S', b's' => b's',
+        b'W' => b'W', b'w' => b'w',
+        b'K' => b'M', b'k' => b'm',
+        b'M' => b'K', b'm' => b'k',
+        b'B' => b'V', b'b' => b'v',
+        b'V' => b'B', b'v' => b'b',
+        b'D' => b'H', b'd' => b'h',
+        b'H' => b'D', b'h' => b'd',
+        _ => b'N',
+    }
+}
+
+/// Reverse-complement a nucleotide sequence string.
+///
+/// Handles uppercase and lowercase IUPAC bases, preserving case. Non-IUPAC
+/// characters are mapped to `N`. Returns the reverse complement as a new `String`.
+pub fn revcomp(seq: &str) -> String {
+    seq.bytes().rev().map(|b| complement_base(b) as char).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +395,34 @@ mod tests {
         let regions = read_bed(f.path()).unwrap();
         assert_eq!(regions.len(), 2);
         assert_eq!(regions[1].1, "FOO");
+    }
+
+    // --- revcomp ---
+
+    #[test]
+    fn revcomp_simple() {
+        assert_eq!(revcomp("ACGT"), "ACGT"); // palindrome
+        assert_eq!(revcomp("AAAA"), "TTTT");
+        assert_eq!(revcomp("GCGC"), "GCGC");
+    }
+
+    #[test]
+    fn revcomp_preserves_case() {
+        assert_eq!(revcomp("acgt"), "acgt");
+        assert_eq!(revcomp("AcGt"), "aCgT");
+    }
+
+    #[test]
+    fn revcomp_iupac_codes() {
+        assert_eq!(revcomp("R"), "Y"); // R=A/G → complement Y=C/T, reversed
+        assert_eq!(revcomp("N"), "N");
+    }
+
+    #[test]
+    fn revcomp_involution() {
+        // revcomp(revcomp(x)) == x for any sequence
+        let seq = "ACGTNRYSWKMBDHV";
+        assert_eq!(revcomp(&revcomp(seq)), seq);
     }
 
     fn cuts(cigar: &str, align_start: usize, region_start: usize, region_end: usize) -> ReadCuts {
