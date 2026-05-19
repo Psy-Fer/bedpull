@@ -109,17 +109,25 @@ where
         };
 
         let read_cuts: ReadCuts = get_read_cuts(&cigar, align_start, eff_start, eff_end);
-        // eprintln!("read_cuts: {:?}", read_cuts);
-        if read_cuts.read_end == 0 {
-            // eprintln!("{} read_cut end is zero", name);
-            // counter -= 1;
-            continue;
-        }
+        // get_read_cuts fires on ref_pos == region_start and ref_pos == region_end.
+        // When align_start > region_start, the start trigger never fires; instead get_read_cuts
+        // stores the region_end position in read_start (wrong field) and leaves read_end = 0.
+        // Partial mode detects this and swaps the fields; see utils tests for exact semantics.
+        let (read_start, read_end) = if opts.partial && align_start > region_start {
+            // Left-partial or contained: real start = 0 (beginning of read).
+            // read_start holds region_end position if found; otherwise read is fully contained.
+            let end = if read_cuts.read_start > 0 { read_cuts.read_start } else { i_seq.len() };
+            (0, end)
+        } else if read_cuts.read_end == 0 {
+            // Right-partial (region_end not reached) or no overlap.
+            if opts.partial { (read_cuts.read_start, i_seq.len()) } else { continue }
+        } else {
+            (read_cuts.read_start, read_cuts.read_end)
+        };
         eprintln!("----------------------------------------------------------");
-        // eprintln!("read_cuts: {:?}", read_cuts);
-        let subseq = i_seq[read_cuts.read_start..read_cuts.read_end].to_vec();
+        let subseq = i_seq[read_start..read_end].to_vec();
         let subqual: String =
-            quality_scores_str[read_cuts.read_start..read_cuts.read_end].to_string();
+            quality_scores_str[read_start..read_end].to_string();
         // let subseq_str = String::from_utf8(subseq.to_vec()).expect("unexpected utf8 in sequence");
         // let subqual_str: String = String::from_utf8_lossy(&subqual).into_owned();
         // let subseq_align_span: isize = (read_cuts.ref_end as isize).saturating_sub(read_cuts.ref_start as isize);

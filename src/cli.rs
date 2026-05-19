@@ -108,6 +108,10 @@ pub struct Opts {
     #[clap(long = "include_supplementary", display_order = 8)]
     pub include_supplementary: bool,
 
+    /// Include reads that only partially overlap a BED region (default: spanning reads only)
+    #[clap(long = "partial", display_order = 9)]
+    pub partial: bool,
+
     /// Symmetric reference flank to add on both sides before CIGAR walk (bp)
     #[clap(long = "flanks", default_value = "0", display_order = 9)]
     pub flanks: usize,
@@ -189,6 +193,7 @@ mod tests {
             min_mapq: 0,
             include_secondary: false,
             include_supplementary: false,
+            partial: false,
             flanks: 0,
             lflank: 0,
             rflank: 0,

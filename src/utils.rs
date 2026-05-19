@@ -352,6 +352,38 @@ mod tests {
         let c = cuts("5M", 1, 10, 15);
         assert_eq!(c.read_end, 0);
     }
+
+    // --- partial overlap (documents semantics used by reads.rs partial mode) ---
+
+    #[test]
+    fn left_partial_region_end_stored_in_read_start() {
+        // align_start=5 > region_start=1: the region_start trigger never fires.
+        // When ref_pos hits region_end=8, start==0 so the position lands in read_start.
+        // reads.rs partial mode detects this (align_start > region_start) and uses:
+        //   real_start=0, real_end=read_cuts.read_start
+        let c = cuts("10M", 5, 1, 8);
+        assert_eq!(c.read_start, 3); // pos when ref_pos first reached region_end=8
+        assert_eq!(c.read_end, 0);
+    }
+
+    #[test]
+    fn contained_read_both_fields_zero() {
+        // Read (align 10-14) is fully inside region (1-20): neither boundary is hit.
+        // reads.rs partial mode: real_start=0, real_end=i_seq.len()
+        let c = cuts("5M", 10, 1, 20);
+        assert_eq!(c.read_start, 0);
+        assert_eq!(c.read_end, 0);
+    }
+
+    #[test]
+    fn right_partial_read_end_zero() {
+        // Read (align 1-5) spans region_start=3 but ends before region_end=10.
+        // region_start correctly sets read_start; region_end is never reached so read_end stays 0.
+        // reads.rs partial mode: real_start=read_cuts.read_start, real_end=i_seq.len()
+        let c = cuts("5M", 1, 3, 10);
+        assert_eq!(c.read_start, 2);
+        assert_eq!(c.read_end, 0);
+    }
 }
 
 pub fn extract_from_fasta_coords(
