@@ -9,9 +9,20 @@ keywords = ["bed", "bam", "bioinformatics"]
 license = "MIT"
 categories = ["science", "command-line-utilities"]
 
+[lib]
+name = "bedpull"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bedpull"
+path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies]
 clap = { version = "3.0", features = ["derive", "cargo", "wrap_help"] }
-noodles = {version = "0.66.0", features = ["core", "bam", "sam", "bed", "fasta", "fastq"]}
+noodles = {version = "0.110.0", features = ["core", "bgzf", "bam", "sam", "bed", "fasta", "fastq"]}
 bio = "1"
 itertools = "0.11"
 anyhow = "1.0"
