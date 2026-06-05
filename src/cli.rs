@@ -171,7 +171,9 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
         bail!("--fastq requires --bam");
     }
     if opts.min_region_quality > 0.0 && opts.bam.to_str() == Some("None") {
-        bail!("--min_region_quality requires --bam (quality scores are only available from BAM input)");
+        bail!(
+            "--min_region_quality requires --bam (quality scores are only available from BAM input)"
+        );
     }
     Ok(())
 }

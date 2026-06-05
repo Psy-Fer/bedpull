@@ -1,11 +1,14 @@
 mod cli;
 
 use anyhow::{Context, Result};
-use bedpull::paf::PafIndex;
-use bedpull::reads::{BamConfig, get_bam_reads};
-use bedpull::utils::{extract_from_fasta_coords, get_read_cuts, read_bed, revcomp, write_fasta_record, write_fastq_record};
 use bedpull::ToCigarOps;
+use bedpull::paf::PafIndex;
 use bedpull::paf::read_paf_record_at_offset;
+use bedpull::reads::{BamConfig, get_bam_reads};
+use bedpull::utils::{
+    extract_from_fasta_coords, get_read_cuts, read_bed, revcomp, write_fasta_record,
+    write_fastq_record,
+};
 use clap::Parser;
 use noodles::bam;
 use std::fs::File;
@@ -40,17 +43,23 @@ fn read_bam_header_lenient(path: &Path) -> Result<noodles::sam::Header> {
     let mut reader = noodles::bgzf::io::Reader::new(file);
 
     let mut magic = [0u8; 4];
-    reader.read_exact(&mut magic).context("failed to read BAM magic bytes")?;
+    reader
+        .read_exact(&mut magic)
+        .context("failed to read BAM magic bytes")?;
     if &magic != b"BAM\x01" {
         anyhow::bail!("not a valid BAM file (bad magic)");
     }
 
     let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).context("failed to read BAM header length")?;
+    reader
+        .read_exact(&mut len_buf)
+        .context("failed to read BAM header length")?;
     let l_text = u32::from_le_bytes(len_buf) as usize;
 
     let mut raw_text = vec![0u8; l_text];
-    reader.read_exact(&mut raw_text).context("failed to read BAM header text")?;
+    reader
+        .read_exact(&mut raw_text)
+        .context("failed to read BAM header text")?;
 
     let text = std::str::from_utf8(&raw_text)
         .context("BAM header text is not valid UTF-8")?
@@ -396,10 +405,10 @@ pub fn extract_from_paf(
 
 #[cfg(test)]
 mod tests {
+    use crate::cli::resolve_flanks;
     use bedpull::ToCigarOps;
     use bedpull::paf::{PafIndex, read_paf_record_at_offset};
     use bedpull::utils::get_read_cuts;
-    use crate::cli::resolve_flanks;
 
     const PAF_PATH: &str = "examples/hg002pat_to_hs1.rfc1_only.paf";
 

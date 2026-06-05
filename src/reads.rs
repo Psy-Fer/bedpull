@@ -197,18 +197,27 @@ where
         let (read_start, read_end) = if config.partial && align_start > region_start {
             // Left-partial or contained: real start = 0 (beginning of read).
             // read_start holds region_end position if found; otherwise read is fully contained.
-            let end = if read_cuts.read_start > 0 { read_cuts.read_start } else { i_seq.len() };
+            let end = if read_cuts.read_start > 0 {
+                read_cuts.read_start
+            } else {
+                i_seq.len()
+            };
             (0, end)
         } else if read_cuts.read_end == 0 {
             // Right-partial (region_end not reached) or no overlap.
-            if config.partial { (read_cuts.read_start, i_seq.len()) } else { continue }
+            if config.partial {
+                (read_cuts.read_start, i_seq.len())
+            } else {
+                continue;
+            }
         } else {
             (read_cuts.read_start, read_cuts.read_end)
         };
         let subseq = i_seq[read_start..read_end].to_vec();
         let subqual: String = quality_scores_str[read_start..read_end].to_string();
 
-        if config.min_region_quality > 0.0 && calculate_qscore(&subqual) < config.min_region_quality {
+        if config.min_region_quality > 0.0 && calculate_qscore(&subqual) < config.min_region_quality
+        {
             continue;
         }
 

@@ -84,10 +84,7 @@ fn write_fasta_produces_correct_output() {
 fn write_fastq_produces_correct_output() {
     let mut buf = Vec::new();
     write_fastq_record(&mut buf, "read1", "ACGT", "IIII").unwrap();
-    assert_eq!(
-        String::from_utf8(buf).unwrap(),
-        "@read1\nACGT\n+\nIIII\n"
-    );
+    assert_eq!(String::from_utf8(buf).unwrap(), "@read1\nACGT\n+\nIIII\n");
 }
 
 // --- calculate_qscore ---
