@@ -26,3 +26,5 @@ target
 /target
 CLAUDE.md
 TODO.md
+/fail*
+*.bam
