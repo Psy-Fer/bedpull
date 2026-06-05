@@ -13,6 +13,56 @@ use std::fs::OpenOptions;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
+/// Replace empty `VN:` fields in @PG and @RG header lines.
+/// Some samtools versions write `VN:\t` (empty value), which noodles rejects.
+fn sanitize_bam_header_text(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if !line.starts_with("@PG") && !line.starts_with("@RG") {
+                return line.to_string();
+            }
+            line.split('\t')
+                .map(|f| if f == "VN:" { "VN:unknown" } else { f })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Open the BAM file with a raw BGZF reader, extract and sanitize the SAM header
+/// text, then parse it into a `sam::Header`.  Used as a fallback when noodles'
+/// strict parser rejects the header (e.g. empty `VN:` in `@PG` records).
+fn read_bam_header_lenient(path: &Path) -> Result<noodles::sam::Header> {
+    use std::io::Read;
+
+    let file = File::open(path).context("failed to open BAM file")?;
+    let mut reader = noodles::bgzf::io::Reader::new(file);
+
+    let mut magic = [0u8; 4];
+    reader.read_exact(&mut magic).context("failed to read BAM magic bytes")?;
+    if &magic != b"BAM\x01" {
+        anyhow::bail!("not a valid BAM file (bad magic)");
+    }
+
+    let mut len_buf = [0u8; 4];
+    reader.read_exact(&mut len_buf).context("failed to read BAM header length")?;
+    let l_text = u32::from_le_bytes(len_buf) as usize;
+
+    let mut raw_text = vec![0u8; l_text];
+    reader.read_exact(&mut raw_text).context("failed to read BAM header text")?;
+
+    let text = std::str::from_utf8(&raw_text)
+        .context("BAM header text is not valid UTF-8")?
+        .trim_end_matches('\0');
+
+    let sanitized = sanitize_bam_header_text(text);
+
+    sanitized
+        .parse::<noodles::sam::Header>()
+        .map_err(|e| anyhow::anyhow!("failed to parse sanitized BAM header: {e}"))
+}
+
 use cli::Opts;
 
 fn effective_flanks(opts: &Opts) -> (usize, usize) {
@@ -123,7 +173,21 @@ pub fn extract_from_bam(
         let mut reader = bam::io::indexed_reader::Builder::default()
             .build_from_path(&opts.bam)
             .context("failed to open BAM file")?;
-        let header = reader.read_header().context("failed to read BAM header")?;
+        let header = reader
+            .read_header()
+            .or_else(|e| {
+                if e.kind() == std::io::ErrorKind::InvalidData {
+                    eprintln!(
+                        "Warning: BAM header has non-standard fields (e.g. empty VN: in @PG \
+                         records — produced by some samtools versions). Retrying with lenient parser."
+                    );
+                    read_bam_header_lenient(&opts.bam)
+                        .map_err(|ae| std::io::Error::new(std::io::ErrorKind::InvalidData, ae))
+                } else {
+                    Err(e)
+                }
+            })
+            .context("failed to read BAM header")?;
         let query = reader
             .query(&header, region)
             .context("BAM region query failed")?;
