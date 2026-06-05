@@ -5,6 +5,7 @@ use bedpull::{
     utils::{calculate_qscore, get_read_cuts, read_bed, write_fasta_record, write_fastq_record},
 };
 use std::io::Write;
+use std::path::Path;
 
 // --- re-exports reachable ---
 
@@ -111,4 +112,30 @@ fn get_read_cuts_insertion_captured() {
     let ops = "3M5I4M".to_cigar_ops().unwrap();
     let cuts = get_read_cuts(&ops, 1, 3, 7);
     assert_eq!(cuts.read_end - cuts.read_start, 9); // 1M + 5I + 3M
+}
+
+// --- BAM mode end-to-end ---
+
+#[test]
+fn bam_mode_rfc1_returns_reads() {
+    use noodles::bam;
+    use noodles::core::Region;
+
+    let bam_path = Path::new("examples/rfc1_test.bam");
+    let region: Region = "chr4:39318077-39318136".parse().unwrap();
+
+    let mut reader = bam::io::indexed_reader::Builder::default()
+        .build_from_path(bam_path)
+        .expect("failed to open test BAM");
+    let header = reader.read_header().expect("failed to read BAM header");
+    let query = reader.query(&header, &region).expect("BAM query failed");
+
+    let reads = bedpull::get_bam_reads(&BamConfig::default(), query, &region, 0, 0)
+        .expect("get_bam_reads failed");
+
+    assert!(!reads.is_empty(), "expected reads in RFC1 region");
+    for (name, seq, _qual, _rs, _re, _hap) in &reads {
+        assert!(!name.is_empty());
+        assert!(!seq.is_empty());
+    }
 }
