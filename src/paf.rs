@@ -121,6 +121,12 @@ pub struct PafIndex {
     pub entries: HashMap<String, Vec<PafIndexEntry>>,
 }
 
+impl Default for PafIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PafIndex {
     pub fn new() -> Self {
         PafIndex {
