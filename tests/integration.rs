@@ -157,13 +157,19 @@ fn bam_mode_partial_includes_more_reads() {
     let (mut reader, header, region) = bam_query(bam_path, "chr4:39318077-39318136");
     let query = reader.query(&header, &region).expect("BAM query failed");
 
-    let config = BamConfig { partial: true, ..BamConfig::default() };
-    let reads = bedpull::get_bam_reads(&config, query, &region, 0, 0)
-        .expect("get_bam_reads failed");
+    let config = BamConfig {
+        partial: true,
+        ..BamConfig::default()
+    };
+    let reads =
+        bedpull::get_bam_reads(&config, query, &region, 0, 0).expect("get_bam_reads failed");
 
     // 44 reads overlap the region with --partial (40 spanning + 4 partial)
     assert_eq!(reads.len(), 44, "expected 44 reads with --partial");
-    assert!(reads.len() > 40, "--partial should return more reads than spanning-only");
+    assert!(
+        reads.len() > 40,
+        "--partial should return more reads than spanning-only"
+    );
 }
 
 #[test]
@@ -172,8 +178,7 @@ fn bam_mode_flanks_extend_extracted_sequence() {
 
     let (mut r0, h0, region0) = bam_query(bam_path, "chr4:39318077-39318136");
     let q0 = r0.query(&h0, &region0).unwrap();
-    let reads_no_flank =
-        bedpull::get_bam_reads(&BamConfig::default(), q0, &region0, 0, 0).unwrap();
+    let reads_no_flank = bedpull::get_bam_reads(&BamConfig::default(), q0, &region0, 0, 0).unwrap();
 
     let (mut r1, h1, region1) = bam_query(bam_path, "chr4:39318077-39318136");
     let q1 = r1.query(&h1, &region1).unwrap();
