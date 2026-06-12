@@ -171,8 +171,16 @@ where
         //     continue;
         // }
 
-        let region_start = usize::from(region.interval().start().unwrap());
-        let region_end = usize::from(region.interval().end().unwrap());
+        let region_start = region
+            .interval()
+            .start()
+            .map(usize::from)
+            .ok_or_else(|| anyhow::anyhow!("BED region has unbounded start"))?;
+        let region_end = region
+            .interval()
+            .end()
+            .map(usize::from)
+            .ok_or_else(|| anyhow::anyhow!("BED region has unbounded end"))?;
 
         // Expand window by flanks; reads overlapping anywhere in the flanked window are included.
         let desired_start = region_start.saturating_sub(lflank);

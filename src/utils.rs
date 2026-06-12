@@ -111,7 +111,6 @@ pub fn get_read_cuts(
     let ref_end = region_end;
 
     for op in cigar_ops {
-        // let op = op.expect("op code didn't work");
         match op.kind {
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
                 if (ref_pos + op.len >= ref_start) || (ref_pos + op.len >= ref_end) {

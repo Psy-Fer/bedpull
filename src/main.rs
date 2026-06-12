@@ -210,8 +210,15 @@ pub fn extract_from_bam(
             );
             continue;
         }
-        let region_start = usize::from(region.interval().start().unwrap());
-        let region_end = usize::from(region.interval().end().unwrap());
+        let region_start =
+            region.interval().start().map(usize::from).ok_or_else(|| {
+                anyhow::anyhow!("BED region '{}' has unbounded start", region_name)
+            })?;
+        let region_end = region
+            .interval()
+            .end()
+            .map(usize::from)
+            .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
         // write to fasta or fastq
         for (name, subseq, subqual, _ref_start, _ref_end, hap) in overlapping_reads {
             let head = format!(
@@ -291,8 +298,15 @@ pub fn extract_from_paf(
             continue;
         }
 
-        let region_start = usize::from(region.interval().start().unwrap());
-        let region_end = usize::from(region.interval().end().unwrap());
+        let region_start =
+            region.interval().start().map(usize::from).ok_or_else(|| {
+                anyhow::anyhow!("BED region '{}' has unbounded start", region_name)
+            })?;
+        let region_end = region
+            .interval()
+            .end()
+            .map(usize::from)
+            .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
         let (lflank, rflank) = effective_flanks(opts);
 
         // Query index for overlapping entries
