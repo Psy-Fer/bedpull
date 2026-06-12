@@ -328,8 +328,14 @@ mod tests {
         opts.bam = bam.clone();
         let err = check_inputs_exist(&opts).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("samtools index"), "error should suggest samtools index: {msg}");
-        assert!(msg.contains("reads.bam"), "error should mention the BAM path: {msg}");
+        assert!(
+            msg.contains("samtools index"),
+            "error should suggest samtools index: {msg}"
+        );
+        assert!(
+            msg.contains("reads.bam"),
+            "error should mention the BAM path: {msg}"
+        );
     }
 
     #[test]
@@ -341,8 +347,14 @@ mod tests {
         opts.query_ref = fa.clone();
         let err = check_inputs_exist(&opts).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("samtools faidx"), "error should suggest samtools faidx: {msg}");
-        assert!(msg.contains("assembly.fa"), "error should mention the FASTA path: {msg}");
+        assert!(
+            msg.contains("samtools faidx"),
+            "error should suggest samtools faidx: {msg}"
+        );
+        assert!(
+            msg.contains("assembly.fa"),
+            "error should mention the FASTA path: {msg}"
+        );
     }
 
     #[test]
