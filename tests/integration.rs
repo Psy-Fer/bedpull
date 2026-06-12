@@ -116,26 +116,80 @@ fn get_read_cuts_insertion_captured() {
 
 // --- BAM mode end-to-end ---
 
-#[test]
-fn bam_mode_rfc1_returns_reads() {
-    use noodles::bam;
-    use noodles::core::Region;
-
-    let bam_path = Path::new("examples/rfc1_test.bam");
-    let region: Region = "chr4:39318077-39318136".parse().unwrap();
-
-    let mut reader = bam::io::indexed_reader::Builder::default()
+fn bam_query(
+    bam_path: &Path,
+    region_str: &str,
+) -> (
+    noodles::bam::io::indexed_reader::IndexedReader<
+        impl noodles::bgzf::io::BufRead + noodles::bgzf::io::Seek,
+    >,
+    noodles::sam::Header,
+    noodles::core::Region,
+) {
+    let region: noodles::core::Region = region_str.parse().unwrap();
+    let mut reader = noodles::bam::io::indexed_reader::Builder::default()
         .build_from_path(bam_path)
         .expect("failed to open test BAM");
     let header = reader.read_header().expect("failed to read BAM header");
+    (reader, header, region)
+}
+
+#[test]
+fn bam_mode_rfc1_returns_reads() {
+    let bam_path = Path::new("examples/rfc1_test.bam");
+    let (mut reader, header, region) = bam_query(bam_path, "chr4:39318077-39318136");
     let query = reader.query(&header, &region).expect("BAM query failed");
 
     let reads = bedpull::get_bam_reads(&BamConfig::default(), query, &region, 0, 0)
         .expect("get_bam_reads failed");
 
-    assert!(!reads.is_empty(), "expected reads in RFC1 region");
+    // 40 reads fully span chr4:39318077-39318136 in the test BAM
+    assert_eq!(reads.len(), 40, "expected 40 spanning reads");
     for (name, seq, _qual, _rs, _re, _hap) in &reads {
         assert!(!name.is_empty());
         assert!(!seq.is_empty());
     }
+}
+
+#[test]
+fn bam_mode_partial_includes_more_reads() {
+    let bam_path = Path::new("examples/rfc1_test.bam");
+    let (mut reader, header, region) = bam_query(bam_path, "chr4:39318077-39318136");
+    let query = reader.query(&header, &region).expect("BAM query failed");
+
+    let config = BamConfig { partial: true, ..BamConfig::default() };
+    let reads = bedpull::get_bam_reads(&config, query, &region, 0, 0)
+        .expect("get_bam_reads failed");
+
+    // 44 reads overlap the region with --partial (40 spanning + 4 partial)
+    assert_eq!(reads.len(), 44, "expected 44 reads with --partial");
+    assert!(reads.len() > 40, "--partial should return more reads than spanning-only");
+}
+
+#[test]
+fn bam_mode_flanks_extend_extracted_sequence() {
+    let bam_path = Path::new("examples/rfc1_test.bam");
+
+    let (mut r0, h0, region0) = bam_query(bam_path, "chr4:39318077-39318136");
+    let q0 = r0.query(&h0, &region0).unwrap();
+    let reads_no_flank =
+        bedpull::get_bam_reads(&BamConfig::default(), q0, &region0, 0, 0).unwrap();
+
+    let (mut r1, h1, region1) = bam_query(bam_path, "chr4:39318077-39318136");
+    let q1 = r1.query(&h1, &region1).unwrap();
+    let reads_with_flank =
+        bedpull::get_bam_reads(&BamConfig::default(), q1, &region1, 100, 100).unwrap();
+
+    // Flanks can pull in reads whose effective window is clamped to alignment end,
+    // so count can increase; sequences are always wider or equal per read.
+    assert!(
+        reads_with_flank.len() >= reads_no_flank.len(),
+        "flanks should not reduce read count"
+    );
+    let total_no_flank: usize = reads_no_flank.iter().map(|(_, s, ..)| s.len()).sum();
+    let total_with_flank: usize = reads_with_flank.iter().map(|(_, s, ..)| s.len()).sum();
+    assert!(
+        total_with_flank > total_no_flank,
+        "flanked extraction ({total_with_flank} bp) should exceed unflanked ({total_no_flank} bp)"
+    );
 }

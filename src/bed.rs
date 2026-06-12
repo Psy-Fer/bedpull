@@ -92,11 +92,23 @@ impl<R: BufRead> Iterator for BedReader<R> {
     type Item = Result<BedRecord, &'static str>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut line = String::new();
-        match self.reader.read_line(&mut line) {
-            Ok(0) => None, // EOF reached
-            Ok(_) => Some(BedRecord::from_str(line.trim_end())),
-            Err(_) => Some(Err("Error reading line")),
+        loop {
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => return None,
+                Ok(_) => {
+                    let trimmed = line.trim_end();
+                    if trimmed.is_empty()
+                        || trimmed.starts_with('#')
+                        || trimmed.starts_with("track")
+                        || trimmed.starts_with("browser")
+                    {
+                        continue;
+                    }
+                    return Some(BedRecord::from_str(trimmed));
+                }
+                Err(_) => return Some(Err("Error reading line")),
+            }
         }
     }
 }
@@ -187,5 +199,43 @@ mod tests {
         let records: Vec<_> = reader_from(data).collect();
         assert_eq!(records.len(), 1);
         assert!(records[0].is_err());
+    }
+
+    #[test]
+    fn reader_skips_track_lines() {
+        let data = "track name=\"foo\" description=\"bar\"\nchr1\t100\t200\n";
+        let records: Vec<_> = reader_from(data).collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].as_ref().unwrap().chrom, "chr1");
+    }
+
+    #[test]
+    fn reader_skips_browser_lines() {
+        let data = "browser position chr1:100-200\nchr1\t100\t200\n";
+        let records: Vec<_> = reader_from(data).collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].as_ref().unwrap().chrom, "chr1");
+    }
+
+    #[test]
+    fn reader_skips_comment_and_blank_lines() {
+        let data = "# this is a comment\n\nchr1\t100\t200\n";
+        let records: Vec<_> = reader_from(data).collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].as_ref().unwrap().chrom, "chr1");
+    }
+
+    #[test]
+    fn reader_skips_ucsc_preamble() {
+        let data = concat!(
+            "browser position chr7:127471196-127495720\n",
+            "browser hide all\n",
+            "track name=\"demo\" visibility=2\n",
+            "chr7\t127471196\t127472363\tPos1\n",
+            "chr7\t127472363\t127473530\tPos2\n",
+        );
+        let records: Vec<_> = reader_from(data).collect();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].as_ref().unwrap().chrom, "chr7");
     }
 }
