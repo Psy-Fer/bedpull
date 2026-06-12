@@ -135,22 +135,63 @@ pub struct Opts {
 
 fn check_if_file_exists(filename: &PathBuf) -> Result<()> {
     if !Path::new(filename).exists() {
-        bail!("file not found: {:?}", filename);
+        bail!("file not found: {}", filename.display());
     }
     Ok(())
+}
+
+/// Returns the path to a BAM index if one exists, checking both `<bam>.bai`
+/// and `<bam>.bam.bai` conventions. Returns `None` if neither is present.
+fn bam_index_path(bam: &Path) -> Option<PathBuf> {
+    // Most common: foo.bam.bai (samtools index default)
+    let bam_bai = bam.with_extension("bam.bai");
+    if bam_bai.exists() {
+        return Some(bam_bai);
+    }
+    // Alternative: foo.bai
+    let bai = bam.with_extension("bai");
+    if bai.exists() {
+        return Some(bai);
+    }
+    None
+}
+
+/// Returns the path to a FASTA index (`<fasta>.fai`), or `None` if absent.
+fn fasta_index_path(fasta: &Path) -> Option<PathBuf> {
+    let mut s = fasta.as_os_str().to_owned();
+    s.push(".fai");
+    let fai = PathBuf::from(s);
+    if fai.exists() { Some(fai) } else { None }
 }
 
 pub fn check_inputs_exist(opts: &Opts) -> Result<()> {
     if opts.bam.to_str() != Some("None") {
         check_if_file_exists(&opts.bam)?;
+        if bam_index_path(&opts.bam).is_none() {
+            bail!(
+                "BAM index not found for '{}'\n\
+                 Create it with:\n  samtools index {}",
+                opts.bam.display(),
+                opts.bam.display()
+            );
+        }
     }
     if opts.reference.to_str() != Some("None") {
         check_if_file_exists(&opts.reference)?;
     }
-    if opts.bam.to_str() != Some("None") {
-        let mut bai = opts.bam.clone();
-        bai.set_extension("bam.bai");
-        check_if_file_exists(&bai)?;
+    if opts.paf.to_str() != Some("None") {
+        check_if_file_exists(&opts.paf)?;
+    }
+    if opts.query_ref.to_str() != Some("None") {
+        check_if_file_exists(&opts.query_ref)?;
+        if fasta_index_path(&opts.query_ref).is_none() {
+            bail!(
+                "FASTA index not found for '{}'\n\
+                 Create it with:\n  samtools faidx {}",
+                opts.query_ref.display(),
+                opts.query_ref.display()
+            );
+        }
     }
     if opts.bed.to_str() != Some("None") {
         check_if_file_exists(&opts.bed)?;
@@ -228,6 +269,80 @@ mod tests {
     #[test]
     fn no_fastq_no_bam_is_ok() {
         assert!(check_option_values(&make_opts(false, "None")).is_ok());
+    }
+
+    // --- index detection ---
+
+    #[test]
+    fn bam_index_found_as_bam_bai() {
+        let dir = tempfile::tempdir().unwrap();
+        let bam = dir.path().join("reads.bam");
+        let bai = dir.path().join("reads.bam.bai");
+        std::fs::write(&bam, b"").unwrap();
+        std::fs::write(&bai, b"").unwrap();
+        assert!(bam_index_path(&bam).is_some());
+    }
+
+    #[test]
+    fn bam_index_found_as_bai() {
+        let dir = tempfile::tempdir().unwrap();
+        let bam = dir.path().join("reads.bam");
+        let bai = dir.path().join("reads.bai");
+        std::fs::write(&bam, b"").unwrap();
+        std::fs::write(&bai, b"").unwrap();
+        assert!(bam_index_path(&bam).is_some());
+    }
+
+    #[test]
+    fn bam_index_missing_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let bam = dir.path().join("reads.bam");
+        std::fs::write(&bam, b"").unwrap();
+        assert!(bam_index_path(&bam).is_none());
+    }
+
+    #[test]
+    fn fasta_index_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let fa = dir.path().join("assembly.fa");
+        let fai = dir.path().join("assembly.fa.fai");
+        std::fs::write(&fa, b"").unwrap();
+        std::fs::write(&fai, b"").unwrap();
+        assert!(fasta_index_path(&fa).is_some());
+    }
+
+    #[test]
+    fn fasta_index_missing_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let fa = dir.path().join("assembly.fa");
+        std::fs::write(&fa, b"").unwrap();
+        assert!(fasta_index_path(&fa).is_none());
+    }
+
+    #[test]
+    fn missing_bam_index_error_contains_samtools_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let bam = dir.path().join("reads.bam");
+        std::fs::write(&bam, b"").unwrap();
+        let mut opts = make_opts(false, "None");
+        opts.bam = bam.clone();
+        let err = check_inputs_exist(&opts).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("samtools index"), "error should suggest samtools index: {msg}");
+        assert!(msg.contains("reads.bam"), "error should mention the BAM path: {msg}");
+    }
+
+    #[test]
+    fn missing_query_ref_index_error_contains_samtools_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let fa = dir.path().join("assembly.fa");
+        std::fs::write(&fa, b"").unwrap();
+        let mut opts = make_opts(false, "None");
+        opts.query_ref = fa.clone();
+        let err = check_inputs_exist(&opts).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("samtools faidx"), "error should suggest samtools faidx: {msg}");
+        assert!(msg.contains("assembly.fa"), "error should mention the FASTA path: {msg}");
     }
 
     #[test]
