@@ -121,32 +121,29 @@ fn main() -> Result<()> {
     eprintln!("Reading bed file");
     let regions = read_bed(&opts.bed)?;
 
-    let output_file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&opts.output)?;
-
-    let mut read_writer: BufWriter<File> = BufWriter::new(output_file);
-
-    // if reference input
-    // eprintln!("Reference mode");
-    // eprintln!("Extracting sequences");
-    // for region in bed
-    // cut out sequence
-    // write to fasta
+    let mut read_writer: Box<dyn std::io::Write> = if cli::is_stdout(&opts.output) {
+        Box::new(BufWriter::new(std::io::stdout()))
+    } else {
+        let output_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&opts.output)
+            .with_context(|| format!("failed to open output file: {}", opts.output.display()))?;
+        Box::new(BufWriter::new(output_file))
+    };
 
     // if bam
     if opts.bam.to_str() != Some("None") {
         eprintln!("Bam mode");
         eprintln!("Extracting sequences");
-        extract_from_bam(&opts, regions, &mut read_writer)?;
+        extract_from_bam(&opts, regions, read_writer.as_mut())?;
     }
     // if paf
     else if opts.paf.to_str() != Some("None") && opts.query_ref.to_str() != Some("None") {
         eprintln!("paf mode");
         eprintln!("Extracting sequences");
-        extract_from_paf(&opts, regions, &mut read_writer)?;
+        extract_from_paf(&opts, regions, read_writer.as_mut())?;
     }
 
     eprintln!("Done");
@@ -156,7 +153,7 @@ fn main() -> Result<()> {
 pub fn extract_from_bam(
     opts: &Opts,
     regions: Vec<(noodles::core::Region, String, String)>,
-    read_writer: &mut BufWriter<File>,
+    read_writer: &mut dyn std::io::Write,
 ) -> Result<()> {
     // Open per-haplotype writers when --hap_split is set.
     let mut hap_writers: Option<[BufWriter<File>; 3]> = None;
@@ -223,7 +220,7 @@ pub fn extract_from_bam(
             );
             let seq_str =
                 std::str::from_utf8(&subseq).context("BAM sequence contains invalid UTF-8")?;
-            let writer: &mut BufWriter<File> = match hap_writers.as_mut() {
+            let writer: &mut dyn std::io::Write = match hap_writers.as_mut() {
                 Some(writers) => match hap {
                     1 => &mut writers[1],
                     2 => &mut writers[2],
@@ -253,7 +250,7 @@ pub fn extract_from_bam(
 pub fn extract_from_paf(
     opts: &Opts,
     regions: Vec<(noodles::core::Region, String, String)>,
-    read_writer: &mut BufWriter<File>,
+    read_writer: &mut dyn std::io::Write,
 ) -> Result<()> {
     // Build or load index
     let paf_path = opts

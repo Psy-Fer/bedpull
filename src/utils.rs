@@ -247,7 +247,7 @@ pub fn read_bed(path: &Path) -> Result<Vec<(Region, String, String)>> {
 ///
 /// Outputs `>header\nsequence\n`. No line-wrapping is applied; the sequence is
 /// written as a single line. Returns an error if the underlying write fails.
-pub fn write_fasta_record<W: Write>(writer: &mut W, header: &str, sequence: &str) -> Result<()> {
+pub fn write_fasta_record<W: Write + ?Sized>(writer: &mut W, header: &str, sequence: &str) -> Result<()> {
     writeln!(writer, ">{}", header)?;
     writeln!(writer, "{}", sequence)?;
     Ok(())
@@ -258,7 +258,7 @@ pub fn write_fasta_record<W: Write>(writer: &mut W, header: &str, sequence: &str
 /// Outputs the standard four-line FASTQ format: `@header`, sequence, `+`, quality.
 /// `quality` must be a Phred+33 encoded string of the same length as `sequence`.
 /// Returns an error if the underlying write fails.
-pub fn write_fastq_record<W: Write>(
+pub fn write_fastq_record<W: Write + ?Sized>(
     writer: &mut W,
     header: &str,
     sequence: &str,

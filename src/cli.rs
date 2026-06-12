@@ -65,8 +65,8 @@ pub struct Opts {
     )]
     pub query_ref: PathBuf,
 
-    /// Write a fasta or optionally fastq (bam required) file with extracted query sequences
-    #[clap(short = 'o', long = "output", required = true, display_order = 4)]
+    /// Output file path. Use '-' or omit to write to stdout.
+    #[clap(short = 'o', long = "output", default_value = "-", display_order = 4)]
     pub output: PathBuf,
 
     // /// Create a consensus sequence from extracted sequences for each region
@@ -207,6 +207,10 @@ pub fn resolve_flanks(flanks: usize, lflank: usize, rflank: usize) -> (usize, us
     (left, right)
 }
 
+pub fn is_stdout(output: &std::path::Path) -> bool {
+    output.to_str() == Some("-")
+}
+
 pub fn check_option_values(opts: &Opts) -> Result<()> {
     if opts.fastq && opts.bam.to_str() == Some("None") {
         bail!("--fastq requires --bam");
@@ -215,6 +219,9 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
         bail!(
             "--min_region_quality requires --bam (quality scores are only available from BAM input)"
         );
+    }
+    if opts.hap_split && is_stdout(&opts.output) {
+        bail!("--hap_split requires --output <file> (cannot split haplotypes to stdout)");
     }
     Ok(())
 }
