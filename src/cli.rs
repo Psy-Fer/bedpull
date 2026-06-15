@@ -276,7 +276,9 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
         bail!("--bed_out is only valid in PAF mode (--paf + --query_ref)");
     }
     if has_bed_out && is_stdout(&opts.bed_out) && is_stdout(&opts.output) {
-        bail!("--bed_out and --output cannot both be stdout ('-'); use a file path for one of them");
+        bail!(
+            "--bed_out and --output cannot both be stdout ('-'); use a file path for one of them"
+        );
     }
     if has_bed_out && !is_stdout(&opts.bed_out) {
         let parent = opts.bed_out.parent().unwrap_or(Path::new("."));
