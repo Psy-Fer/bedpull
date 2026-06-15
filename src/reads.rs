@@ -384,8 +384,7 @@ pub fn get_cram_reads(
         let subseq = i_seq[read_start..read_end].to_vec();
         let subqual: String = quality_scores_str[read_start..read_end].to_string();
 
-        if config.min_region_quality > 0.0
-            && calculate_qscore(&subqual) < config.min_region_quality
+        if config.min_region_quality > 0.0 && calculate_qscore(&subqual) < config.min_region_quality
         {
             continue;
         }

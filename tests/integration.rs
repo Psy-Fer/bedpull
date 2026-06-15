@@ -249,8 +249,15 @@ fn cram_mode_partial_includes_more_reads() {
     let reads =
         bedpull::get_cram_reads(&config, query, &region, 0, 0).expect("get_cram_reads failed");
 
-    assert_eq!(reads.len(), 44, "expected 44 reads with --partial from CRAM");
-    assert!(reads.len() > 40, "--partial should return more reads than spanning-only");
+    assert_eq!(
+        reads.len(),
+        44,
+        "expected 44 reads with --partial from CRAM"
+    );
+    assert!(
+        reads.len() > 40,
+        "--partial should return more reads than spanning-only"
+    );
 }
 
 #[test]
@@ -284,8 +291,7 @@ fn cram_mode_sequences_match_bam_mode() {
     let bam_path = Path::new("examples/rfc1_test.bam");
     let (mut br, bh, bregion) = bam_query(bam_path, "chr4:39318077-39318136");
     let bq = br.query(&bh, &bregion).unwrap();
-    let mut bam_reads =
-        bedpull::get_bam_reads(&BamConfig::default(), bq, &bregion, 0, 0).unwrap();
+    let mut bam_reads = bedpull::get_bam_reads(&BamConfig::default(), bq, &bregion, 0, 0).unwrap();
 
     let cram_path = Path::new("examples/rfc1_test.cram");
     let (mut cr, ch, cregion) = cram_query(cram_path, "chr4:39318077-39318136");
@@ -293,7 +299,11 @@ fn cram_mode_sequences_match_bam_mode() {
     let mut cram_reads =
         bedpull::get_cram_reads(&BamConfig::default(), cq, &cregion, 0, 0).unwrap();
 
-    assert_eq!(bam_reads.len(), cram_reads.len(), "read counts differ between BAM and CRAM");
+    assert_eq!(
+        bam_reads.len(),
+        cram_reads.len(),
+        "read counts differ between BAM and CRAM"
+    );
 
     bam_reads.sort_by(|a, b| a.0.cmp(&b.0));
     cram_reads.sort_by(|a, b| a.0.cmp(&b.0));
