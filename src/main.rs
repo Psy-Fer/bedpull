@@ -4,13 +4,16 @@ use anyhow::{Context, Result};
 use bedpull::ToCigarOps;
 use bedpull::paf::PafIndex;
 use bedpull::paf::read_paf_record_at_offset;
-use bedpull::reads::{BamConfig, get_bam_reads};
+use bedpull::reads::{BamConfig, get_bam_reads, get_cram_reads};
 use bedpull::utils::{
     extract_from_fasta_coords, get_read_cuts, read_bed, revcomp, write_fasta_record,
     write_fastq_record,
 };
 use clap::Parser;
 use noodles::bam;
+use noodles::cram;
+use noodles::fasta;
+use noodles::fasta::repository::adapters::IndexedReader as FastaIndexedReader;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufWriter;
@@ -133,15 +136,16 @@ fn main() -> Result<()> {
         Box::new(BufWriter::new(output_file))
     };
 
-    // if bam
     if opts.bam.to_str() != Some("None") {
-        eprintln!("Bam mode");
+        eprintln!("BAM mode");
         eprintln!("Extracting sequences");
         extract_from_bam(&opts, regions, read_writer.as_mut())?;
-    }
-    // if paf
-    else if opts.paf.to_str() != Some("None") && opts.query_ref.to_str() != Some("None") {
-        eprintln!("paf mode");
+    } else if opts.cram.to_str() != Some("None") {
+        eprintln!("CRAM mode");
+        eprintln!("Extracting sequences");
+        extract_from_cram(&opts, regions, read_writer.as_mut())?;
+    } else if opts.paf.to_str() != Some("None") && opts.query_ref.to_str() != Some("None") {
+        eprintln!("PAF mode");
         eprintln!("Extracting sequences");
         extract_from_paf(&opts, regions, read_writer.as_mut())?;
     }
@@ -227,6 +231,106 @@ pub fn extract_from_bam(
             );
             let seq_str =
                 std::str::from_utf8(&subseq).context("BAM sequence contains invalid UTF-8")?;
+            let writer: &mut dyn std::io::Write = match hap_writers.as_mut() {
+                Some(writers) => match hap {
+                    1 => &mut writers[1],
+                    2 => &mut writers[2],
+                    _ => {
+                        if hap > 2 {
+                            eprintln!("Warning: unexpected HP tag value {hap}, routing to h0");
+                        }
+                        &mut writers[0]
+                    }
+                },
+                None => read_writer,
+            };
+            if opts.fastq {
+                write_fastq_record(writer, &head, seq_str, &subqual)
+                    .context("failed to write FASTQ record")?;
+            } else {
+                write_fasta_record(writer, &head, seq_str)
+                    .context("failed to write FASTA record")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn extract_from_cram(
+    opts: &Opts,
+    regions: Vec<(noodles::core::Region, String, String)>,
+    read_writer: &mut dyn std::io::Write,
+) -> Result<()> {
+    // Open per-haplotype writers when --hap_split is set.
+    let mut hap_writers: Option<[BufWriter<File>; 3]> = None;
+    if opts.hap_split {
+        hap_writers = Some([
+            open_writer(&hap_output_path(&opts.output, 0))?,
+            open_writer(&hap_output_path(&opts.output, 1))?,
+            open_writer(&hap_output_path(&opts.output, 2))?,
+        ]);
+    }
+
+    // Build a reference sequence repository from --reference if provided.
+    let reference_repo = if opts.reference.to_str() != Some("None") {
+        let indexed = fasta::io::indexed_reader::Builder::default()
+            .build_from_path(&opts.reference)
+            .with_context(|| {
+                format!(
+                    "failed to open reference FASTA: {}",
+                    opts.reference.display()
+                )
+            })?;
+        fasta::Repository::new(FastaIndexedReader::new(indexed))
+    } else {
+        fasta::Repository::default()
+    };
+
+    for (region, region_name, chr) in regions.iter() {
+        eprintln!("===============================");
+        eprintln!("Analysing region: {}, {}", region, region_name);
+        eprintln!("===============================");
+
+        if region.name().contains(&b'#') {
+            eprintln!("Region {} has a #, skipping", region_name);
+            continue;
+        }
+
+        let mut reader = cram::io::indexed_reader::Builder::default()
+            .set_reference_sequence_repository(reference_repo.clone())
+            .build_from_path(&opts.cram)
+            .context("failed to open CRAM file")?;
+        let header = reader.read_header().context("failed to read CRAM header")?;
+        let query = reader
+            .query(&header, region)
+            .context("CRAM region query failed")?;
+
+        let (lflank, rflank) = effective_flanks(opts);
+        let overlapping_reads = get_cram_reads(&bam_config(opts), query, region, lflank, rflank)?;
+        if overlapping_reads.is_empty() {
+            eprintln!(
+                "No reads found for region in CRAM file. Skipping region: {}",
+                region_name
+            );
+            continue;
+        }
+        let region_start =
+            region.interval().start().map(usize::from).ok_or_else(|| {
+                anyhow::anyhow!("BED region '{}' has unbounded start", region_name)
+            })?;
+        let region_end = region
+            .interval()
+            .end()
+            .map(usize::from)
+            .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
+
+        for (name, subseq, subqual, _ref_start, _ref_end, hap) in overlapping_reads {
+            let head = format!(
+                "{}|{}:{:?}-{:?}|{}",
+                name, chr, region_start, region_end, region_name
+            );
+            let seq_str =
+                std::str::from_utf8(&subseq).context("CRAM sequence contains invalid UTF-8")?;
             let writer: &mut dyn std::io::Write = match hap_writers.as_mut() {
                 Some(writers) => match hap {
                     1 => &mut writers[1],

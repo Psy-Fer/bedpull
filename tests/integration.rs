@@ -7,6 +7,24 @@ use bedpull::{
 use std::io::Write;
 use std::path::Path;
 
+// --- CRAM helpers ---
+
+fn cram_query(
+    cram_path: &Path,
+    region_str: &str,
+) -> (
+    noodles::cram::io::IndexedReader<std::fs::File>,
+    noodles::sam::Header,
+    noodles::core::Region,
+) {
+    let region: noodles::core::Region = region_str.parse().unwrap();
+    let mut reader = noodles::cram::io::indexed_reader::Builder::default()
+        .build_from_path(cram_path)
+        .expect("failed to open test CRAM");
+    let header = reader.read_header().expect("failed to read CRAM header");
+    (reader, header, region)
+}
+
 // --- re-exports reachable ---
 
 #[test]
@@ -197,4 +215,91 @@ fn bam_mode_flanks_extend_extracted_sequence() {
         total_with_flank > total_no_flank,
         "flanked extraction ({total_with_flank} bp) should exceed unflanked ({total_no_flank} bp)"
     );
+}
+
+// --- CRAM mode end-to-end ---
+
+#[test]
+fn cram_mode_rfc1_returns_same_reads_as_bam() {
+    let cram_path = Path::new("examples/rfc1_test.cram");
+    let (mut reader, header, region) = cram_query(cram_path, "chr4:39318077-39318136");
+    let query = reader.query(&header, &region).expect("CRAM query failed");
+
+    let reads = bedpull::get_cram_reads(&BamConfig::default(), query, &region, 0, 0)
+        .expect("get_cram_reads failed");
+
+    // Should match the 40 spanning reads returned by BAM mode
+    assert_eq!(reads.len(), 40, "expected 40 spanning reads from CRAM");
+    for (name, seq, _qual, _rs, _re, _hap) in &reads {
+        assert!(!name.is_empty());
+        assert!(!seq.is_empty());
+    }
+}
+
+#[test]
+fn cram_mode_partial_includes_more_reads() {
+    let cram_path = Path::new("examples/rfc1_test.cram");
+    let (mut reader, header, region) = cram_query(cram_path, "chr4:39318077-39318136");
+    let query = reader.query(&header, &region).expect("CRAM query failed");
+
+    let config = BamConfig {
+        partial: true,
+        ..BamConfig::default()
+    };
+    let reads =
+        bedpull::get_cram_reads(&config, query, &region, 0, 0).expect("get_cram_reads failed");
+
+    assert_eq!(reads.len(), 44, "expected 44 reads with --partial from CRAM");
+    assert!(reads.len() > 40, "--partial should return more reads than spanning-only");
+}
+
+#[test]
+fn cram_mode_flanks_extend_extracted_sequence() {
+    let cram_path = Path::new("examples/rfc1_test.cram");
+
+    let (mut r0, h0, region0) = cram_query(cram_path, "chr4:39318077-39318136");
+    let q0 = r0.query(&h0, &region0).unwrap();
+    let reads_no_flank =
+        bedpull::get_cram_reads(&BamConfig::default(), q0, &region0, 0, 0).unwrap();
+
+    let (mut r1, h1, region1) = cram_query(cram_path, "chr4:39318077-39318136");
+    let q1 = r1.query(&h1, &region1).unwrap();
+    let reads_with_flank =
+        bedpull::get_cram_reads(&BamConfig::default(), q1, &region1, 100, 100).unwrap();
+
+    assert!(
+        reads_with_flank.len() >= reads_no_flank.len(),
+        "flanks should not reduce read count"
+    );
+    let total_no_flank: usize = reads_no_flank.iter().map(|(_, s, ..)| s.len()).sum();
+    let total_with_flank: usize = reads_with_flank.iter().map(|(_, s, ..)| s.len()).sum();
+    assert!(
+        total_with_flank > total_no_flank,
+        "flanked CRAM extraction ({total_with_flank} bp) should exceed unflanked ({total_no_flank} bp)"
+    );
+}
+
+#[test]
+fn cram_mode_sequences_match_bam_mode() {
+    let bam_path = Path::new("examples/rfc1_test.bam");
+    let (mut br, bh, bregion) = bam_query(bam_path, "chr4:39318077-39318136");
+    let bq = br.query(&bh, &bregion).unwrap();
+    let mut bam_reads =
+        bedpull::get_bam_reads(&BamConfig::default(), bq, &bregion, 0, 0).unwrap();
+
+    let cram_path = Path::new("examples/rfc1_test.cram");
+    let (mut cr, ch, cregion) = cram_query(cram_path, "chr4:39318077-39318136");
+    let cq = cr.query(&ch, &cregion).unwrap();
+    let mut cram_reads =
+        bedpull::get_cram_reads(&BamConfig::default(), cq, &cregion, 0, 0).unwrap();
+
+    assert_eq!(bam_reads.len(), cram_reads.len(), "read counts differ between BAM and CRAM");
+
+    bam_reads.sort_by(|a, b| a.0.cmp(&b.0));
+    cram_reads.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for ((bname, bseq, ..), (cname, cseq, ..)) in bam_reads.iter().zip(cram_reads.iter()) {
+        assert_eq!(bname, cname, "read names differ");
+        assert_eq!(bseq, cseq, "sequences differ for read {bname}");
+    }
 }

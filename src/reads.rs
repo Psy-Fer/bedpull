@@ -3,6 +3,8 @@ use itertools::Itertools;
 use noodles::bam;
 use noodles::core::Region;
 use noodles::sam::alignment::Record;
+use noodles::sam::alignment::record::cigar::Cigar as SamCigar;
+use noodles::sam::alignment::record::data::field::Tag as SamTag;
 
 pub use crate::cigar::ToCigarOps;
 use crate::utils::{ReadCuts, calculate_qscore, get_read_cuts};
@@ -272,6 +274,145 @@ where
     // eprintln!("Number of reads no HAP: {}", h0_subseq_vec.len());
 
     Ok(h0_subseq_vec)
+}
+
+/// Extract subsequences from all CRAM records that overlap a given region.
+///
+/// Works identically to [`get_bam_reads`] but consumes any iterator that yields
+/// `io::Result<sam::alignment::RecordBuf>` — the item type produced by
+/// `cram::io::IndexedReader::query`.
+pub fn get_cram_reads(
+    config: &BamConfig,
+    query: impl Iterator<Item = std::io::Result<noodles::sam::alignment::RecordBuf>>,
+    region: &Region,
+    lflank: usize,
+    rflank: usize,
+) -> Result<Vec<BamRead>> {
+    use noodles::sam::alignment::record_buf::data::field::Value as RecordBufValue;
+
+    let mut results: Vec<BamRead> = vec![];
+
+    let region_start = region
+        .interval()
+        .start()
+        .map(usize::from)
+        .ok_or_else(|| anyhow::anyhow!("BED region has unbounded start"))?;
+    let region_end = region
+        .interval()
+        .end()
+        .map(usize::from)
+        .ok_or_else(|| anyhow::anyhow!("BED region has unbounded end"))?;
+
+    for result in query {
+        let record = result.context("failed to read CRAM record")?;
+
+        let map_quality = record.mapping_quality().map(u8::from).unwrap_or(255);
+        if map_quality < config.min_mapq {
+            continue;
+        }
+
+        let flags = record.flags();
+        if flags.is_secondary() && !config.include_secondary {
+            continue;
+        }
+        if flags.is_supplementary() && !config.include_supplementary {
+            continue;
+        }
+
+        let align_start = usize::from(
+            record
+                .alignment_start()
+                .ok_or_else(|| anyhow::anyhow!("CRAM record has no alignment start"))?,
+        );
+        let align_end = usize::from(
+            record
+                .alignment_end()
+                .ok_or_else(|| anyhow::anyhow!("CRAM record has no alignment end"))?,
+        );
+
+        let name_bytes: &[u8] = record
+            .name()
+            .ok_or_else(|| anyhow::anyhow!("CRAM record has no name"))?
+            .as_ref();
+        let name = String::from_utf8(name_bytes.to_vec())
+            .context("CRAM record name contains invalid UTF-8")?;
+
+        let i_seq: Vec<u8> = record.sequence().as_ref().to_vec();
+        let i_qual = record
+            .quality_scores()
+            .as_ref()
+            .iter()
+            .map(|&score| score + 33)
+            .collect::<Vec<_>>();
+        let quality_scores_str: String = String::from_utf8_lossy(&i_qual).into_owned();
+
+        let cigar = (record.cigar() as &dyn SamCigar)
+            .to_cigar_ops()
+            .context("invalid CIGAR in CRAM record")?;
+
+        let desired_start = region_start.saturating_sub(lflank);
+        let desired_end = region_end + rflank;
+
+        if (align_end < desired_start) || (align_start > desired_end) {
+            continue;
+        }
+
+        let (eff_start, eff_end) = if lflank == 0 && rflank == 0 {
+            (region_start, region_end)
+        } else {
+            (desired_start.max(align_start), desired_end.min(align_end))
+        };
+
+        let read_cuts = get_read_cuts(&cigar, align_start, eff_start, eff_end);
+        let (read_start, read_end) = if config.partial && align_start > region_start {
+            let end = if read_cuts.read_start > 0 {
+                read_cuts.read_start
+            } else {
+                i_seq.len()
+            };
+            (0, end)
+        } else if read_cuts.read_end == 0 {
+            if config.partial {
+                (read_cuts.read_start, i_seq.len())
+            } else {
+                continue;
+            }
+        } else {
+            (read_cuts.read_start, read_cuts.read_end)
+        };
+
+        let subseq = i_seq[read_start..read_end].to_vec();
+        let subqual: String = quality_scores_str[read_start..read_end].to_string();
+
+        if config.min_region_quality > 0.0
+            && calculate_qscore(&subqual) < config.min_region_quality
+        {
+            continue;
+        }
+
+        let hp_tag = SamTag::new(b'H', b'P');
+        let hap: u8 = record
+            .data()
+            .get(&hp_tag)
+            .and_then(|v| {
+                if let RecordBufValue::Int32(i) = v {
+                    Some(*i as u8)
+                } else {
+                    v.as_int().map(|i| i as u8)
+                }
+            })
+            .unwrap_or(0);
+
+        results.push((
+            name,
+            subseq,
+            subqual,
+            read_cuts.ref_start,
+            read_cuts.ref_end,
+            hap,
+        ));
+    }
+    Ok(results)
 }
 
 #[cfg(test)]

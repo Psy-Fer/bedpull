@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
         )
         ]
 pub struct Opts {
-    /// Aligned bam file
+    /// Aligned BAM file
     #[clap(
         short = 'b',
         long = "bam",
@@ -27,7 +27,16 @@ pub struct Opts {
     )]
     pub bam: PathBuf,
 
-    /// Reference *.fa/fasta
+    /// Aligned CRAM file (requires --reference for reference-compressed CRAMs)
+    #[clap(
+        long = "cram",
+        parse(from_os_str),
+        default_value = "None",
+        display_order = 1
+    )]
+    pub cram: PathBuf,
+
+    /// Reference FASTA (required for CRAM decoding; used with --cram)
     #[clap(
         short = 'f',
         long = "reference",
@@ -145,6 +154,14 @@ fn fasta_index_path(fasta: &Path) -> Option<PathBuf> {
     if fai.exists() { Some(fai) } else { None }
 }
 
+/// Returns the CRAI path (`<cram>.crai`) if it exists, `None` otherwise.
+fn cram_index_path(cram: &Path) -> Option<PathBuf> {
+    let mut s = cram.as_os_str().to_owned();
+    s.push(".crai");
+    let crai = PathBuf::from(s);
+    if crai.exists() { Some(crai) } else { None }
+}
+
 pub fn check_inputs_exist(opts: &Opts) -> Result<()> {
     if opts.bam.to_str() != Some("None") {
         check_if_file_exists(&opts.bam)?;
@@ -154,6 +171,17 @@ pub fn check_inputs_exist(opts: &Opts) -> Result<()> {
                  Create it with:\n  samtools index {}",
                 opts.bam.display(),
                 opts.bam.display()
+            );
+        }
+    }
+    if opts.cram.to_str() != Some("None") {
+        check_if_file_exists(&opts.cram)?;
+        if cram_index_path(&opts.cram).is_none() {
+            bail!(
+                "CRAM index not found for '{}'\n\
+                 Create it with:\n  samtools index {}",
+                opts.cram.display(),
+                opts.cram.display()
             );
         }
     }
@@ -193,12 +221,14 @@ pub fn is_stdout(output: &std::path::Path) -> bool {
 }
 
 pub fn check_option_values(opts: &Opts) -> Result<()> {
-    if opts.fastq && opts.bam.to_str() == Some("None") {
-        bail!("--fastq requires --bam");
+    let has_bam = opts.bam.to_str() != Some("None");
+    let has_cram = opts.cram.to_str() != Some("None");
+    if opts.fastq && !has_bam && !has_cram {
+        bail!("--fastq requires --bam or --cram");
     }
-    if opts.min_region_quality > 0.0 && opts.bam.to_str() == Some("None") {
+    if opts.min_region_quality > 0.0 && !has_bam && !has_cram {
         bail!(
-            "--min_region_quality requires --bam (quality scores are only available from BAM input)"
+            "--min_region_quality requires --bam or --cram (quality scores are only available from alignment input)"
         );
     }
     if opts.hap_split && is_stdout(&opts.output) {
@@ -225,6 +255,7 @@ mod tests {
     fn make_opts(fastq: bool, bam: &str) -> Opts {
         Opts {
             bam: PathBuf::from(bam),
+            cram: PathBuf::from("None"),
             reference: PathBuf::from("None"),
             bed: PathBuf::from("test.bed"),
             paf: PathBuf::from("None"),
