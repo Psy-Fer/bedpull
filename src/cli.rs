@@ -187,6 +187,14 @@ pub fn check_inputs_exist(opts: &Opts) -> Result<()> {
     }
     if opts.reference.to_str() != Some("None") {
         check_if_file_exists(&opts.reference)?;
+        if fasta_index_path(&opts.reference).is_none() {
+            bail!(
+                "FASTA index not found for '{}'\n\
+                 Create it with:\n  samtools faidx {}",
+                opts.reference.display(),
+                opts.reference.display()
+            );
+        }
     }
     if opts.paf.to_str() != Some("None") {
         check_if_file_exists(&opts.paf)?;
@@ -223,6 +231,30 @@ pub fn is_stdout(output: &std::path::Path) -> bool {
 pub fn check_option_values(opts: &Opts) -> Result<()> {
     let has_bam = opts.bam.to_str() != Some("None");
     let has_cram = opts.cram.to_str() != Some("None");
+    let has_paf = opts.paf.to_str() != Some("None");
+    let has_query_ref = opts.query_ref.to_str() != Some("None");
+
+    // Conflicting modes
+    if has_bam && has_cram {
+        bail!("--bam and --cram are mutually exclusive; provide only one");
+    }
+    if (has_bam || has_cram) && has_paf {
+        bail!("--paf cannot be combined with --bam or --cram");
+    }
+
+    // PAF requires both halves
+    if has_paf && !has_query_ref {
+        bail!("--paf requires --query_ref <fasta>");
+    }
+    if has_query_ref && !has_paf {
+        bail!("--query_ref requires --paf <paf>");
+    }
+
+    // At least one mode must be specified
+    if !has_bam && !has_cram && !has_paf {
+        bail!("no input mode specified — provide --bam, --cram, or --paf + --query_ref");
+    }
+
     if opts.fastq && !has_bam && !has_cram {
         bail!("--fastq requires --bam or --cram");
     }
@@ -234,6 +266,25 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
     if opts.hap_split && is_stdout(&opts.output) {
         bail!("--hap_split requires --output <file> (cannot split haplotypes to stdout)");
     }
+
+    // Output parent directory must exist
+    if !is_stdout(&opts.output) {
+        let parent = opts.output.parent().unwrap_or(Path::new("."));
+        let parent = if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        };
+        if !parent.exists() {
+            bail!(
+                "output directory does not exist: {}\n\
+                 Create it with:\n  mkdir -p {}",
+                parent.display(),
+                parent.display()
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -286,8 +337,69 @@ mod tests {
     }
 
     #[test]
-    fn no_fastq_no_bam_is_ok() {
-        assert!(check_option_values(&make_opts(false, "None")).is_ok());
+    fn no_mode_specified_is_error() {
+        assert!(check_option_values(&make_opts(false, "None")).is_err());
+    }
+
+    #[test]
+    fn bam_mode_is_ok() {
+        assert!(check_option_values(&make_opts(false, "reads.bam")).is_ok());
+    }
+
+    fn make_opts_paf(paf: &str, query_ref: &str) -> Opts {
+        let mut o = make_opts(false, "None");
+        o.paf = PathBuf::from(paf);
+        o.query_ref = PathBuf::from(query_ref);
+        o
+    }
+
+    #[test]
+    fn paf_without_query_ref_is_error() {
+        let mut o = make_opts(false, "None");
+        o.paf = PathBuf::from("aln.paf");
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn query_ref_without_paf_is_error() {
+        let mut o = make_opts(false, "None");
+        o.query_ref = PathBuf::from("asm.fa");
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn paf_with_query_ref_is_ok() {
+        assert!(check_option_values(&make_opts_paf("aln.paf", "asm.fa")).is_ok());
+    }
+
+    #[test]
+    fn bam_and_cram_together_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.cram = PathBuf::from("reads.cram");
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn bam_and_paf_together_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.paf = PathBuf::from("aln.paf");
+        o.query_ref = PathBuf::from("asm.fa");
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn output_missing_parent_dir_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.output = PathBuf::from("/nonexistent_dir_bedpull_test/out.fasta");
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn output_existing_parent_dir_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut o = make_opts(false, "reads.bam");
+        o.output = dir.path().join("out.fasta");
+        assert!(check_option_values(&o).is_ok());
     }
 
     // --- index detection ---
