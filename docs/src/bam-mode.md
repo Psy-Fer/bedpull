@@ -13,6 +13,12 @@ bedpull \
 
 The BAM must have a companion `.bam.bai` index in the same directory. The output is FASTA by default; use `--fastq` to include quality scores.
 
+Omit `--output` (or pass `-`) to write to stdout:
+
+```bash
+bedpull --bam reads.bam --bed regions.bed | seqkit stats
+```
+
 ## FASTQ output
 
 ```bash
@@ -101,12 +107,26 @@ This creates three output files alongside the specified `--output` path:
 | `out.h1.fasta` | Reads with HP tag = 1 |
 | `out.h2.fasta` | Reads with HP tag = 2 |
 
+## Deduplication
+
+A read whose alignment spans two BED regions will appear in the output once per region by default, which can be useful when you want region-specific context. To emit each read only once across all regions:
+
+```bash
+bedpull --bam reads.bam --bed regions.bed --output out.fasta --dedup
+```
+
 ## Output header format
 
 Each FASTA/FASTQ record has a header of the form:
 
 ```
 >read_name|chr:region_start-region_end|region_name
+```
+
+When `--hap_split` is active and the read carries an HP tag, a haplotype suffix is appended:
+
+```
+>read_name|chr:region_start-region_end|region_name|h1
 ```
 
 `region_name` comes from the 4th column of the BED file, or defaults to `chr:start-end` if absent.

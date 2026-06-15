@@ -17,7 +17,7 @@ bedpull \
     --output extracted.fasta
 ```
 
-Output is always FASTA in PAF mode (quality scores are not available from a FASTA).
+Output is always FASTA in PAF mode (quality scores are not available from a FASTA). Omit `--output` (or pass `-`) to write to stdout.
 
 ## The PAF index
 
@@ -69,15 +69,76 @@ bedpull \
 
 The effective window is clamped to the actual extent of each overlapping alignment, so a flank that extends beyond the alignment boundary does not cause an error — it is silently truncated.
 
+## BED liftover output
+
+PAF mode can simultaneously write a BED6 file containing the lifted-over query coordinates for every extracted region. This is useful for the two-step liftover workflow: extract assembly coordinates from the PAF, then use those coordinates to query reads aligned to the assembly.
+
+```bash
+bedpull \
+    --paf assembly_to_ref.paf \
+    --query_ref assembly.fasta \
+    --bed ref_regions.bed \
+    --output extracted.fasta \
+    --bed_out assembly_regions.bed
+```
+
+The output BED6 has the form:
+
+```
+query_name  query_start  query_end  bed_name  0  strand
+```
+
+`--bed_out` can be combined with `--output` independently. Pass `-` to write the BED to stdout (but not at the same time as `--output -`).
+
+## Haplotype splitting
+
+If PAF records carry the `hp:i:` optional tag (set by assemblers or phasing tools that emit phased contigs), you can split the output by haplotype:
+
+```bash
+bedpull \
+    --paf assembly_to_ref.paf \
+    --query_ref assembly.fasta \
+    --bed regions.bed \
+    --output out.fasta \
+    --hap_split
+```
+
+This creates three output files:
+
+| File | Contents |
+|------|----------|
+| `out.h0.fasta` | Alignments with no `hp:i:` tag |
+| `out.h1.fasta` | Alignments with `hp:i:1` |
+| `out.h2.fasta` | Alignments with `hp:i:2` |
+
+## Deduplication
+
+A query contig that aligns to two BED regions will appear in the output once per region by default. To emit each contig only once across all regions:
+
+```bash
+bedpull \
+    --paf assembly_to_ref.paf \
+    --query_ref assembly.fasta \
+    --bed regions.bed \
+    --output out.fasta \
+    --dedup
+```
+
 ## Output header format
 
 Each FASTA record produced in PAF mode has a header of the form:
 
 ```
->query_name|ref_region_name:ref_start-ref_end|query_query_name:query_start-query_end
+>contig_name|chr:ref_start-ref_end|bed_name|contig_name:query_start-query_end|strand
 ```
 
-The query coordinates are computed as `paf_record.query_start + cuts.read_start` and `paf_record.query_start + cuts.read_end`, giving the precise position within the assembly sequence.
+When the alignment carries an `hp:i:` tag, a haplotype suffix is appended:
+
+```
+>contig_name|chr:ref_start-ref_end|bed_name|contig_name:query_start-query_end|strand|h1
+```
+
+The query coordinates (`query_start`, `query_end`) are the 0-based half-open positions within the query contig that were extracted. These are the same values written to `--bed_out`.
 
 ## Alignment coverage warnings
 
@@ -97,7 +158,8 @@ bedpull \
     --paf hg002pat_to_chm13.paf \
     --query_ref HG002_paternal.fasta \
     --bed rfc1_vntr.bed \
-    --output rfc1_paternal.fasta
+    --output rfc1_paternal.fasta \
+    --bed_out rfc1_paternal_coords.bed
 ```
 
-The first run builds `hg002pat_to_chm13.paf.idx`. The second run loads it in milliseconds. The output FASTA contains the paternal assembly sequence corresponding to the RFC1 region, including any inserted bases that are not present in the CHM13 reference.
+The first run builds `hg002pat_to_chm13.paf.idx`. The second run loads it in milliseconds. `rfc1_paternal.fasta` contains the paternal assembly sequence over the RFC1 region, including inserted bases invisible to reference-only tools. `rfc1_paternal_coords.bed` contains the corresponding query coordinates, ready to use as input to a subsequent BAM-mode run against reads aligned to the paternal assembly.

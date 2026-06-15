@@ -1,6 +1,6 @@
 # Introduction
 
-`bedpull` extracts sequences from BAM or PAF alignment files using BED coordinates. It is designed for situations where standard coordinate-lifting tools — `samtools faidx`, `bedtools getfasta`, `liftOver` — give you the wrong answer because the region of interest contains structural variation relative to the reference.
+`bedpull` extracts sequences from BAM, CRAM, or PAF alignment files using BED coordinates. It is designed for situations where standard coordinate-lifting tools — `samtools faidx`, `bedtools getfasta`, `liftOver` — give you the wrong answer because the region of interest contains structural variation relative to the reference.
 
 ## The problem with reference-only extraction
 
