@@ -78,6 +78,10 @@ pub struct Opts {
     #[clap(short = 'o', long = "output", default_value = "-", display_order = 4)]
     pub output: PathBuf,
 
+    /// Write lifted-over query coordinates as BED6 to this file (PAF mode only). Use '-' to write to stdout.
+    #[clap(long = "bed_out", default_value = "None", display_order = 5)]
+    pub bed_out: PathBuf,
+
     /// Use paf index
     #[clap(long = "use_paf_index", default_value = "true", display_order = 8)]
     pub use_paf_index: bool,
@@ -267,6 +271,30 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
         bail!("--hap_split requires --output <file> (cannot split haplotypes to stdout)");
     }
 
+    let has_bed_out = opts.bed_out.to_str() != Some("None");
+    if has_bed_out && !has_paf {
+        bail!("--bed_out is only valid in PAF mode (--paf + --query_ref)");
+    }
+    if has_bed_out && is_stdout(&opts.bed_out) && is_stdout(&opts.output) {
+        bail!("--bed_out and --output cannot both be stdout ('-'); use a file path for one of them");
+    }
+    if has_bed_out && !is_stdout(&opts.bed_out) {
+        let parent = opts.bed_out.parent().unwrap_or(Path::new("."));
+        let parent = if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        };
+        if !parent.exists() {
+            bail!(
+                "bed_out directory does not exist: {}\n\
+                 Create it with:\n  mkdir -p {}",
+                parent.display(),
+                parent.display()
+            );
+        }
+    }
+
     // Output parent directory must exist
     if !is_stdout(&opts.output) {
         let parent = opts.output.parent().unwrap_or(Path::new("."));
@@ -312,6 +340,7 @@ mod tests {
             paf: PathBuf::from("None"),
             query_ref: PathBuf::from("None"),
             output: PathBuf::from("out.fasta"),
+            bed_out: PathBuf::from("None"),
             use_paf_index: true,
             fastq,
             min_mapq: 0,
@@ -486,6 +515,38 @@ mod tests {
             msg.contains("assembly.fa"),
             "error should mention the FASTA path: {msg}"
         );
+    }
+
+    // --- bed_out validation ---
+
+    #[test]
+    fn bed_out_without_paf_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.bed_out = PathBuf::from("out.bed");
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn bed_out_with_paf_is_ok() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.bed_out = PathBuf::from("out.bed");
+        assert!(check_option_values(&o).is_ok());
+    }
+
+    #[test]
+    fn bed_out_and_output_both_stdout_is_error() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.output = PathBuf::from("-");
+        o.bed_out = PathBuf::from("-");
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn bed_out_stdout_with_output_file_is_ok() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.output = PathBuf::from("out.fasta");
+        o.bed_out = PathBuf::from("-");
+        assert!(check_option_values(&o).is_ok());
     }
 
     #[test]

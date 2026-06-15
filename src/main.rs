@@ -16,7 +16,7 @@ use noodles::fasta;
 use noodles::fasta::repository::adapters::IndexedReader as FastaIndexedReader;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 /// Replace empty `VN:` fields in @PG and @RG header lines.
@@ -225,9 +225,14 @@ pub fn extract_from_bam(
             .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
         // write to fasta or fastq
         for (name, subseq, subqual, _ref_start, _ref_end, hap) in overlapping_reads {
+            let hap_suffix = if hap > 0 {
+                format!("|h{}", hap)
+            } else {
+                String::new()
+            };
             let head = format!(
-                "{}|{}:{:?}-{:?}|{}",
-                name, chr, region_start, region_end, region_name
+                "{}|{}:{}-{}|{}{}",
+                name, chr, region_start, region_end, region_name, hap_suffix
             );
             let seq_str =
                 std::str::from_utf8(&subseq).context("BAM sequence contains invalid UTF-8")?;
@@ -325,9 +330,14 @@ pub fn extract_from_cram(
             .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
 
         for (name, subseq, subqual, _ref_start, _ref_end, hap) in overlapping_reads {
+            let hap_suffix = if hap > 0 {
+                format!("|h{}", hap)
+            } else {
+                String::new()
+            };
             let head = format!(
-                "{}|{}:{:?}-{:?}|{}",
-                name, chr, region_start, region_end, region_name
+                "{}|{}:{}-{}|{}{}",
+                name, chr, region_start, region_end, region_name, hap_suffix
             );
             let seq_str =
                 std::str::from_utf8(&subseq).context("CRAM sequence contains invalid UTF-8")?;
@@ -370,6 +380,26 @@ pub fn extract_from_paf(
             open_writer(&hap_output_path(&opts.output, 2))?,
         ]);
     }
+
+    // Open --bed_out writer if requested.
+    let mut bed_out_writer: Option<Box<dyn std::io::Write>> =
+        if opts.bed_out.to_str() != Some("None") {
+            if cli::is_stdout(&opts.bed_out) {
+                Some(Box::new(BufWriter::new(std::io::stdout())))
+            } else {
+                let f = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&opts.bed_out)
+                    .with_context(|| {
+                        format!("failed to open bed_out file: {}", opts.bed_out.display())
+                    })?;
+                Some(Box::new(BufWriter::new(f)))
+            }
+        } else {
+            None
+        };
 
     // Build or load index
     let paf_path = opts
@@ -507,18 +537,40 @@ pub fn extract_from_paf(
                     sequence
                 };
 
-                // Write fasta output
+                // Write BED6 liftover record if --bed_out is set.
+                if let Some(bed_writer) = bed_out_writer.as_mut() {
+                    writeln!(
+                        bed_writer,
+                        "{}\t{}\t{}\t{}\t0\t{}",
+                        paf_record.query_name,
+                        query_start,
+                        query_end,
+                        region_name,
+                        paf_record.strand
+                    )
+                    .context("failed to write BED record")?;
+                }
+
+                // Write FASTA output
+                let hap = paf_record.haplotype.unwrap_or(0);
+                let hap_suffix = if hap > 0 {
+                    format!("|h{}", hap)
+                } else {
+                    String::new()
+                };
                 let header = format!(
-                    "{}|ref_{}:{}-{}|query_{}:{}-{}",
+                    "{}|{}:{}-{}|{}|{}:{}-{}|{}{}",
                     paf_record.query_name,
-                    region_name,
+                    chr,
                     region_start,
                     region_end,
+                    region_name,
                     paf_record.query_name,
                     query_start,
-                    query_end
+                    query_end,
+                    paf_record.strand,
+                    hap_suffix
                 );
-                let hap = paf_record.haplotype.unwrap_or(0);
                 let writer: &mut dyn std::io::Write = match hap_writers.as_mut() {
                     Some(writers) => match hap {
                         1 => &mut writers[1],
