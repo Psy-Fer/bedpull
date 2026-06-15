@@ -248,8 +248,6 @@ pub fn extract_from_bam(
                     .context("failed to write FASTA record")?;
             }
         }
-        // if consensus: generate consensus
-        // write to consensus fasta (potential fastq using mean q score per base?)
     }
     Ok(())
 }
@@ -259,6 +257,16 @@ pub fn extract_from_paf(
     regions: Vec<(noodles::core::Region, String, String)>,
     read_writer: &mut dyn std::io::Write,
 ) -> Result<()> {
+    // Open per-haplotype writers when --hap_split is set.
+    let mut hap_writers: Option<[BufWriter<File>; 3]> = None;
+    if opts.hap_split {
+        hap_writers = Some([
+            open_writer(&hap_output_path(&opts.output, 0))?,
+            open_writer(&hap_output_path(&opts.output, 1))?,
+            open_writer(&hap_output_path(&opts.output, 2))?,
+        ]);
+    }
+
     // Build or load index
     let paf_path = opts
         .paf
@@ -406,7 +414,21 @@ pub fn extract_from_paf(
                     query_start,
                     query_end
                 );
-                write_fasta_record(read_writer, &header, &sequence)
+                let hap = paf_record.haplotype.unwrap_or(0);
+                let writer: &mut dyn std::io::Write = match hap_writers.as_mut() {
+                    Some(writers) => match hap {
+                        1 => &mut writers[1],
+                        2 => &mut writers[2],
+                        _ => {
+                            if hap > 2 {
+                                eprintln!("Warning: unexpected HP tag value {hap}, routing to h0");
+                            }
+                            &mut writers[0]
+                        }
+                    },
+                    None => read_writer,
+                };
+                write_fasta_record(writer, &header, &sequence)
                     .context("failed to write FASTA record")?;
             }
         }

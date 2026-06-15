@@ -41,6 +41,8 @@ pub struct PafRecord {
     pub mapping_quality: u8,
     /// Full CIGAR string from the `cg:Z:` optional tag, if present.
     pub cigar: Option<String>,
+    /// Haplotype phase from the `hp:i:` optional tag, if present.
+    pub haplotype: Option<u8>,
 }
 
 impl PafRecord {
@@ -55,12 +57,17 @@ impl PafRecord {
             bail!("invalid PAF line: too few fields (got {})", fields.len());
         }
 
-        // Extract CIGAR from cg tag ("cg:Z:" is 5 bytes)
-        let cigar = fields
+        let optional = &fields[12..];
+
+        let cigar = optional
             .iter()
-            .skip(12)
             .find(|f| f.starts_with("cg:Z:"))
             .map(|f| f[5..].to_string());
+
+        let haplotype = optional
+            .iter()
+            .find(|f| f.starts_with("hp:i:"))
+            .and_then(|f| f[5..].trim().parse::<u8>().ok());
 
         Ok(PafRecord {
             query_name: fields[0].to_string(),
@@ -79,6 +86,7 @@ impl PafRecord {
             alignment_length: fields[10].parse().context("invalid PAF alignment length")?,
             mapping_quality: fields[11].parse().context("invalid PAF mapping quality")?,
             cigar,
+            haplotype,
         })
     }
 

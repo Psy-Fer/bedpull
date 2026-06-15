@@ -69,25 +69,6 @@ pub struct Opts {
     #[clap(short = 'o', long = "output", default_value = "-", display_order = 4)]
     pub output: PathBuf,
 
-    // /// Create a consensus sequence from extracted sequences for each region
-    // #[clap(short = 'c', long = "consensus", display_order = 5)]
-    // pub consensus: bool,
-
-    // /// Consensus fasta file output
-    // #[clap(long = "c_output", default_value = "consensus.bedpull.fasta", display_order = 5)]
-    // pub c_output: PathBuf,
-
-    // /// Minimum number of reads in a haplotype group to build a consensus
-    // #[clap(long = "min_read_count", default_value = "3", display_order = 6)]
-    // pub min_read_count: usize,
-
-    // /// Split sequences based on haplotype tag HP
-    // #[clap(short = 'h', long = "hap_split", display_order = 7)]
-    // pub hap_split: bool,
-
-    // /// Use 4th column of bed to add name to output
-    // #[clap(short = 'n', long = "name", display_order = 8)]
-    // pub name: bool,
     /// Use paf index
     #[clap(long = "use_paf_index", default_value = "true", display_order = 8)]
     pub use_paf_index: bool,
@@ -116,7 +97,7 @@ pub struct Opts {
     #[clap(long = "min_region_quality", default_value = "0", display_order = 10)]
     pub min_region_quality: f64,
 
-    /// Split output by haplotype HP tag into separate files (BAM only; reads without HP tag go to h0)
+    /// Split output by haplotype tag (HP in BAM, hp:i: in PAF) into separate files; reads/alignments without the tag go to h0
     #[clap(long = "hap_split", display_order = 11)]
     pub hap_split: bool,
 
