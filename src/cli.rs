@@ -114,6 +114,10 @@ pub struct Opts {
     #[clap(long = "hap_split", display_order = 11)]
     pub hap_split: bool,
 
+    /// Deduplicate output: if the same read/contig name is seen more than once (e.g. spanning multiple BED regions), emit it only the first time
+    #[clap(long = "dedup", display_order = 12)]
+    pub dedup: bool,
+
     /// Symmetric reference flank to add on both sides before CIGAR walk (bp)
     #[clap(long = "flanks", default_value = "0", display_order = 9)]
     pub flanks: usize,
@@ -354,6 +358,7 @@ mod tests {
             rflank: 0,
             min_region_quality: 0.0,
             hap_split: false,
+            dedup: false,
         }
     }
 

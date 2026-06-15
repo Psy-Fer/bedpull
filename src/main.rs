@@ -9,6 +9,7 @@ use noodles::bam;
 use noodles::cram;
 use noodles::fasta;
 use noodles::fasta::repository::adapters::IndexedReader as FastaIndexedReader;
+use std::collections::HashSet;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
@@ -154,6 +155,8 @@ pub fn extract_from_bam(
     regions: Vec<(noodles::core::Region, String, String)>,
     read_writer: &mut dyn std::io::Write,
 ) -> Result<()> {
+    let mut seen: HashSet<String> = HashSet::new();
+
     // Open per-haplotype writers when --hap_split is set.
     let mut hap_writers: Option<[BufWriter<File>; 3]> = None;
     if opts.hap_split {
@@ -220,6 +223,9 @@ pub fn extract_from_bam(
             .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
         // write to fasta or fastq
         for (name, subseq, subqual, _ref_start, _ref_end, hap) in overlapping_reads {
+            if opts.dedup && !seen.insert(name.clone()) {
+                continue;
+            }
             let hap_suffix = if hap > 0 {
                 format!("|h{}", hap)
             } else {
@@ -261,6 +267,8 @@ pub fn extract_from_cram(
     regions: Vec<(noodles::core::Region, String, String)>,
     read_writer: &mut dyn std::io::Write,
 ) -> Result<()> {
+    let mut seen: HashSet<String> = HashSet::new();
+
     // Open per-haplotype writers when --hap_split is set.
     let mut hap_writers: Option<[BufWriter<File>; 3]> = None;
     if opts.hap_split {
@@ -325,6 +333,9 @@ pub fn extract_from_cram(
             .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
 
         for (name, subseq, subqual, _ref_start, _ref_end, hap) in overlapping_reads {
+            if opts.dedup && !seen.insert(name.clone()) {
+                continue;
+            }
             let hap_suffix = if hap > 0 {
                 format!("|h{}", hap)
             } else {
@@ -366,6 +377,8 @@ pub fn extract_from_paf(
     regions: Vec<(noodles::core::Region, String, String)>,
     read_writer: &mut dyn std::io::Write,
 ) -> Result<()> {
+    let mut seen: HashSet<String> = HashSet::new();
+
     // Open per-haplotype writers when --hap_split is set.
     let mut hap_writers: Option<[BufWriter<File>; 3]> = None;
     if opts.hap_split {
@@ -461,6 +474,9 @@ pub fn extract_from_paf(
         )?;
 
         for (sequence, query_name, query_start, query_end, strand, hap) in reads {
+            if opts.dedup && !seen.insert(query_name.clone()) {
+                continue;
+            }
             if let Some(bed_writer) = bed_out_writer.as_mut() {
                 writeln!(
                     bed_writer,
