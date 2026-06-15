@@ -1,14 +1,9 @@
 mod cli;
 
 use anyhow::{Context, Result};
-use bedpull::ToCigarOps;
 use bedpull::paf::PafIndex;
-use bedpull::paf::read_paf_record_at_offset;
-use bedpull::reads::{BamConfig, get_bam_reads, get_cram_reads};
-use bedpull::utils::{
-    extract_from_fasta_coords, get_read_cuts, read_bed, revcomp, write_fasta_record,
-    write_fastq_record,
-};
+use bedpull::reads::{BamConfig, get_bam_reads, get_cram_reads, get_paf_reads};
+use bedpull::utils::{read_bed, write_fasta_record, write_fastq_record};
 use clap::Parser;
 use noodles::bam;
 use noodles::cram;
@@ -455,138 +450,59 @@ pub fn extract_from_paf(
         let overlapping_entries = index.query(chr, region_start, region_end);
         eprintln!("Found {} overlapping alignments", overlapping_entries.len());
 
-        // TODO: move this stuff to the reads.rs file under get_paf_reads
-        // Read actual PAF records from file
-        for entry in overlapping_entries {
-            let paf_record = read_paf_record_at_offset(paf_path, entry.offset)
-                .with_context(|| format!("failed to read PAF record at offset {}", entry.offset))?;
+        let reads = get_paf_reads(
+            paf_path,
+            query_ref,
+            &overlapping_entries,
+            region_start,
+            region_end,
+            lflank,
+            rflank,
+        )?;
 
-            // Warn only when the core region (not the flanks) isn't fully covered.
-            if paf_record.target_start > region_start {
-                eprintln!("Warning: Alignment starts after region start, may be incomplete");
-            }
-            if paf_record.target_end < region_end {
-                eprintln!("Warning: Alignment ends before region end, may be incomplete");
-            }
-
-            // Expand by flanks then clamp to what this alignment actually covers.
-            let eff_start = region_start
-                .saturating_sub(lflank)
-                .max(paf_record.target_start);
-            let eff_end = (region_end + rflank).min(paf_record.target_end);
-
-            if let Some(cigar_str) = &paf_record.cigar {
-                // Convert CIGAR and calculate query coordinates
-                let cigar_ops = cigar_str
-                    .as_str()
-                    .to_cigar_ops()
-                    .context("invalid CIGAR string in PAF record")?;
-                let cuts = get_read_cuts(&cigar_ops, paf_record.target_start, eff_start, eff_end);
-
-                // Validate cuts
-                if cuts.read_start == 0 && cuts.read_end == 0 {
-                    eprintln!("Warning: No valid overlap found, skipping");
-                    continue;
-                }
-
-                if cuts.read_start >= cuts.read_end {
-                    eprintln!(
-                        "Warning: Invalid coordinates (start {} >= end {}), skipping",
-                        cuts.read_start, cuts.read_end
-                    );
-                    continue;
-                }
-
-                // Calculate actual query coordinates.
-                // For '+' strand: cuts are offsets from paf_record.query_start.
-                // For '-' strand: cuts are offsets into the reverse-complemented query,
-                // so we flip them relative to paf_record.query_end.
-                let (query_start, query_end) = if paf_record.strand == '+' {
-                    (
-                        paf_record.query_start + cuts.read_start,
-                        paf_record.query_start + cuts.read_end,
-                    )
-                } else {
-                    (
-                        paf_record.query_end.saturating_sub(cuts.read_end),
-                        paf_record.query_end.saturating_sub(cuts.read_start),
-                    )
-                };
-
-                eprintln!(
-                    "Query coords: {}:{}-{} (strand {})",
-                    paf_record.query_name, query_start, query_end, paf_record.strand
-                );
-
-                // Extract from query FASTA
-                let sequence = extract_from_fasta_coords(
-                    query_ref,
-                    &paf_record.query_name,
-                    query_start,
-                    query_end,
+        for (sequence, query_name, query_start, query_end, strand, hap) in reads {
+            if let Some(bed_writer) = bed_out_writer.as_mut() {
+                writeln!(
+                    bed_writer,
+                    "{}\t{}\t{}\t{}\t0\t{}",
+                    query_name, query_start, query_end, region_name, strand
                 )
-                .with_context(|| {
-                    format!("failed to extract sequence for {}", paf_record.query_name)
-                })?;
-
-                // Reverse-complement for minus-strand alignments so the output is
-                // always in the reference (target) orientation.
-                let sequence = if paf_record.strand == '-' {
-                    revcomp(&sequence)
-                } else {
-                    sequence
-                };
-
-                // Write BED6 liftover record if --bed_out is set.
-                if let Some(bed_writer) = bed_out_writer.as_mut() {
-                    writeln!(
-                        bed_writer,
-                        "{}\t{}\t{}\t{}\t0\t{}",
-                        paf_record.query_name,
-                        query_start,
-                        query_end,
-                        region_name,
-                        paf_record.strand
-                    )
-                    .context("failed to write BED record")?;
-                }
-
-                // Write FASTA output
-                let hap = paf_record.haplotype.unwrap_or(0);
-                let hap_suffix = if hap > 0 {
-                    format!("|h{}", hap)
-                } else {
-                    String::new()
-                };
-                let header = format!(
-                    "{}|{}:{}-{}|{}|{}:{}-{}|{}{}",
-                    paf_record.query_name,
-                    chr,
-                    region_start,
-                    region_end,
-                    region_name,
-                    paf_record.query_name,
-                    query_start,
-                    query_end,
-                    paf_record.strand,
-                    hap_suffix
-                );
-                let writer: &mut dyn std::io::Write = match hap_writers.as_mut() {
-                    Some(writers) => match hap {
-                        1 => &mut writers[1],
-                        2 => &mut writers[2],
-                        _ => {
-                            if hap > 2 {
-                                eprintln!("Warning: unexpected HP tag value {hap}, routing to h0");
-                            }
-                            &mut writers[0]
-                        }
-                    },
-                    None => read_writer,
-                };
-                write_fasta_record(writer, &header, &sequence)
-                    .context("failed to write FASTA record")?;
+                .context("failed to write BED record")?;
             }
+
+            let hap_suffix = if hap > 0 {
+                format!("|h{}", hap)
+            } else {
+                String::new()
+            };
+            let header = format!(
+                "{}|{}:{}-{}|{}|{}:{}-{}|{}{}",
+                query_name,
+                chr,
+                region_start,
+                region_end,
+                region_name,
+                query_name,
+                query_start,
+                query_end,
+                strand,
+                hap_suffix
+            );
+            let writer: &mut dyn std::io::Write = match hap_writers.as_mut() {
+                Some(writers) => match hap {
+                    1 => &mut writers[1],
+                    2 => &mut writers[2],
+                    _ => {
+                        if hap > 2 {
+                            eprintln!("Warning: unexpected HP tag value {hap}, routing to h0");
+                        }
+                        &mut writers[0]
+                    }
+                },
+                None => read_writer,
+            };
+            write_fasta_record(writer, &header, &sequence)
+                .context("failed to write FASTA record")?;
         }
     }
     Ok(())

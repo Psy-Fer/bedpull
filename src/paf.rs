@@ -11,8 +11,6 @@ use std::io::{Seek, SeekFrom};
 /// were run without `--cs`/`--eqx` or that do not emit a full CIGAR. bedpull
 /// requires a CIGAR to perform coordinate-accurate extraction; records without
 /// one are skipped with a warning.
-// TODO: remove this later
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PafRecord {
     /// Name of the query sequence (PAF column 1).
@@ -89,12 +87,6 @@ impl PafRecord {
             haplotype,
         })
     }
-
-    // pub fn overlaps_region(&self, chrom: &str, start: usize, end: usize) -> bool {
-    //     self.target_name == chrom
-    //         && self.target_start < end
-    //         && self.target_end > start
-    // }
 }
 
 /// A single entry in a [`PafIndex`], recording where one alignment record lives on disk.
@@ -377,7 +369,7 @@ mod tests {
 /// the entire file. Returns an error if the file cannot be opened, the seek fails,
 /// or the line cannot be parsed.
 pub fn read_paf_record_at_offset(paf_path: &str, offset: u64) -> Result<PafRecord> {
-    let mut file = File::open(paf_path)?; // can I open this once and move the seek backwards?
+    let mut file = File::open(paf_path)?;
     file.seek(SeekFrom::Start(offset))?;
 
     let mut reader = BufReader::new(file);

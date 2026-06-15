@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use itertools::Itertools;
 use noodles::bam;
 use noodles::core::Region;
 use noodles::sam::alignment::Record;
@@ -7,7 +6,8 @@ use noodles::sam::alignment::record::cigar::Cigar as SamCigar;
 use noodles::sam::alignment::record::data::field::Tag as SamTag;
 
 pub use crate::cigar::ToCigarOps;
-use crate::utils::{ReadCuts, calculate_qscore, get_read_cuts};
+use crate::paf::{PafIndexEntry, read_paf_record_at_offset};
+use crate::utils::{ReadCuts, calculate_qscore, extract_from_fasta_coords, get_read_cuts, revcomp};
 
 /// Filter and extraction settings for BAM reads.
 ///
@@ -68,6 +68,17 @@ impl Default for BamConfig {
 /// - `haplotype` — value of the `HP` aux tag; `0` means the tag was absent (unphased).
 pub type BamRead = (String, Vec<u8>, String, usize, usize, u8);
 
+/// A single PAF alignment after CIGAR-aware extraction.
+///
+/// The tuple fields are `(sequence, query_name, query_start, query_end, strand, haplotype)`.
+///
+/// - `sequence` — the extracted subsequence, always in reference (target) orientation.
+/// - `query_name` — name of the query contig the sequence came from.
+/// - `query_start` / `query_end` — 0-based half-open coordinates on the query contig.
+/// - `strand` — alignment strand (`'+'` or `'-'`).
+/// - `haplotype` — value of the `hp:i:` tag; `0` means absent (unphased).
+pub type PafRead = (String, String, usize, usize, char, u8);
+
 /// Extract subsequences from all BAM reads that overlap a given region.
 ///
 /// Iterates `query` (a BAM region query result), applies the filters defined in
@@ -105,7 +116,7 @@ pub fn get_bam_reads<R>(
 where
     R: noodles::bgzf::io::BufRead + noodles::bgzf::io::Seek,
 {
-    let mut h0_subseq_vec: Vec<BamRead> = vec![]; // no hap assigned
+    let mut results: Vec<BamRead> = Vec::new();
 
     for result in query.records() {
         let record = result.context("failed to read BAM record")?;
@@ -142,36 +153,18 @@ where
         let name = String::from_utf8(name_bytes.to_vec())
             .context("BAM record name contains invalid UTF-8")?;
         let seq = record.sequence();
-        let i_seq = seq.iter().collect_vec();
+        let i_seq: Vec<u8> = seq.iter().collect();
         let i_qual = record
             .quality_scores()
             .as_ref()
             .iter()
-            .map(|&score| score + 33) // Adjust quality scores
+            .map(|&score| score + 33)
             .collect::<Vec<_>>();
-
-        // eprintln!("quality_scores adjusted: {:?}", i_qual);
-        // now convert that to a String
         let quality_scores_str: String = String::from_utf8_lossy(&i_qual).into_owned();
         let cigar = record
             .cigar()
             .to_cigar_ops()
             .context("invalid CIGAR in BAM record")?;
-        // Convert CIGAR operations to string by getting each kind, converting to a char, and going len|char and collecting
-        // let cigar_string: String = cigar_to_string(&cigar);
-        // get start and end position in read sequence coordinates using cigar string
-        // take alignment start as 0 in read position. Work through cigar to get ref co-ord->read position for subsequence start
-        // then continue through read until ref coord end-> read position for subsequence end
-        // extract subsequence and chuck it into vector to be worked on
-        // read_cuts = (start, end)
-
-        // TODO: filter reads by mean read quality
-        // let read_mean_qscore: f64 = calculate_qscore(&quality_scores_str);
-        // if read_mean_qscore < config.min_read_quality {
-        //     eprintln!("{} mean read quality of {} too low (min: {})", name, read_mean_qscore, config.min_read_quality);
-        //     counter -= 1;
-        //     continue;
-        // }
 
         let region_start = region
             .interval()
@@ -184,7 +177,6 @@ where
             .map(usize::from)
             .ok_or_else(|| anyhow::anyhow!("BED region has unbounded end"))?;
 
-        // Expand window by flanks; reads overlapping anywhere in the flanked window are included.
         let desired_start = region_start.saturating_sub(lflank);
         let desired_end = region_end + rflank;
 
@@ -205,8 +197,6 @@ where
         // stores the region_end position in read_start (wrong field) and leaves read_end = 0.
         // Partial mode detects this and swaps the fields; see utils tests for exact semantics.
         let (read_start, read_end) = if config.partial && align_start > region_start {
-            // Left-partial or contained: real start = 0 (beginning of read).
-            // read_start holds region_end position if found; otherwise read is fully contained.
             let end = if read_cuts.read_start > 0 {
                 read_cuts.read_start
             } else {
@@ -214,7 +204,6 @@ where
             };
             (0, end)
         } else if read_cuts.read_end == 0 {
-            // Right-partial (region_end not reached) or no overlap.
             if config.partial {
                 (read_cuts.read_start, i_seq.len())
             } else {
@@ -239,41 +228,17 @@ where
             .map(|i| i as u8)
             .unwrap_or(0);
 
-        h0_subseq_vec.push((
+        results.push((
             name,
-            subseq.clone(),
+            subseq,
             subqual,
             read_cuts.ref_start,
             read_cuts.ref_end,
             hap,
         ));
-        // match hap {
-        //     _ => eprintln!("multiple haplotypes detected. bedpull currently does not support phased data")
-        // }
-
-        // eprintln!("ref_id: {}", ref_id);
-        // eprintln!("align_start: {}", align_start);
-        // eprintln!("align_end: {}", align_end);
-        // eprintln!("map_quality: {:?}", map_quality);
-        // eprintln!("flags: {:?}", flags);
-        // eprintln!("read span: {}", span);
-        // eprintln!("subseq alignment span: {}", subseq_align_span);
-        // eprintln!("subseq relative to reference: {}", subseq_align_span.saturating_sub(subseq.len() as isize));
-        // // eprintln!("cigar: {:?}", cigar_string);
-        // eprintln!("subseq len: {}", subseq.len());
-        // eprintln!("subseq: {:?}", subseq_str);
-        // // eprintln!("subqual: {:?}", subqual);
-        // // eprintln!("all quality_scores_str: {:?}", quality_scores_str);
-        // // eprintln!("data: {:?}", data);
-        // eprintln!("HP tag: {:?}", hap);
-        // eprintln!("subseq_vec: {:?}", subseq_vec);
     }
-    // eprintln!("Number of reads in region: {}", counter);
-    // eprintln!("Number of reads HAP1: {}", h1_subseq_vec.len());
-    // eprintln!("Number of reads HAP2: {}", h2_subseq_vec.len());
-    // eprintln!("Number of reads no HAP: {}", h0_subseq_vec.len());
 
-    Ok(h0_subseq_vec)
+    Ok(results)
 }
 
 /// Extract subsequences from all CRAM records that overlap a given region.
@@ -290,7 +255,7 @@ pub fn get_cram_reads(
 ) -> Result<Vec<BamRead>> {
     use noodles::sam::alignment::record_buf::data::field::Value as RecordBufValue;
 
-    let mut results: Vec<BamRead> = vec![];
+    let mut results: Vec<BamRead> = Vec::new();
 
     let region_start = region
         .interval()
@@ -411,6 +376,115 @@ pub fn get_cram_reads(
             hap,
         ));
     }
+    Ok(results)
+}
+
+/// Extract subsequences from PAF alignment records that overlap a given region.
+///
+/// For each [`PafIndexEntry`] in `entries`, reads the full PAF record from disk,
+/// performs a CIGAR walk to compute the query-coordinate slice that corresponds to
+/// the reference region (expanded by `lflank`/`rflank`), extracts the subsequence
+/// from the query FASTA at `query_ref`, and reverse-complements it for minus-strand
+/// alignments so the output is always in target (reference) orientation.
+///
+/// Records without a `cg:Z:` CIGAR tag or with invalid cut coordinates are skipped
+/// with a diagnostic message to stderr.
+pub fn get_paf_reads(
+    paf_path: &str,
+    query_ref: &str,
+    entries: &[&PafIndexEntry],
+    region_start: usize,
+    region_end: usize,
+    lflank: usize,
+    rflank: usize,
+) -> Result<Vec<PafRead>> {
+    let mut results: Vec<PafRead> = Vec::new();
+
+    for entry in entries {
+        let paf_record = read_paf_record_at_offset(paf_path, entry.offset)
+            .with_context(|| format!("failed to read PAF record at offset {}", entry.offset))?;
+
+        if paf_record.target_start > region_start {
+            eprintln!("Warning: Alignment starts after region start, may be incomplete");
+        }
+        if paf_record.target_end < region_end {
+            eprintln!("Warning: Alignment ends before region end, may be incomplete");
+        }
+
+        let eff_start = region_start
+            .saturating_sub(lflank)
+            .max(paf_record.target_start);
+        let eff_end = (region_end + rflank).min(paf_record.target_end);
+
+        let cigar_str = match &paf_record.cigar {
+            Some(s) => s.clone(),
+            None => {
+                eprintln!("Warning: PAF record has no CIGAR (cg:Z: tag), skipping");
+                continue;
+            }
+        };
+
+        let cigar_ops = cigar_str
+            .as_str()
+            .to_cigar_ops()
+            .context("invalid CIGAR string in PAF record")?;
+        let cuts = get_read_cuts(&cigar_ops, paf_record.target_start, eff_start, eff_end);
+
+        if cuts.read_start == 0 && cuts.read_end == 0 {
+            eprintln!("Warning: No valid overlap found, skipping");
+            continue;
+        }
+        if cuts.read_start >= cuts.read_end {
+            eprintln!(
+                "Warning: Invalid coordinates (start {} >= end {}), skipping",
+                cuts.read_start, cuts.read_end
+            );
+            continue;
+        }
+
+        // For '+' strand: cuts are offsets from paf_record.query_start.
+        // For '-' strand: cuts are offsets into the reverse-complemented query,
+        // so we flip them relative to paf_record.query_end.
+        let (query_start, query_end) = if paf_record.strand == '+' {
+            (
+                paf_record.query_start + cuts.read_start,
+                paf_record.query_start + cuts.read_end,
+            )
+        } else {
+            (
+                paf_record.query_end.saturating_sub(cuts.read_end),
+                paf_record.query_end.saturating_sub(cuts.read_start),
+            )
+        };
+
+        eprintln!(
+            "Query coords: {}:{}-{} (strand {})",
+            paf_record.query_name, query_start, query_end, paf_record.strand
+        );
+
+        let sequence =
+            extract_from_fasta_coords(query_ref, &paf_record.query_name, query_start, query_end)
+                .with_context(|| {
+                    format!("failed to extract sequence for {}", paf_record.query_name)
+                })?;
+
+        let sequence = if paf_record.strand == '-' {
+            revcomp(&sequence)
+        } else {
+            sequence
+        };
+
+        let hap = paf_record.haplotype.unwrap_or(0);
+        results.push((
+            sequence,
+            paf_record.query_name,
+            query_start,
+            query_end,
+            paf_record.strand,
+            hap,
+        ));
+    }
+
     Ok(results)
 }
 
