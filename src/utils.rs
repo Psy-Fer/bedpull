@@ -307,6 +307,58 @@ pub fn revcomp(seq: &str) -> String {
         .collect()
 }
 
+/// Extract a subsequence from an indexed FASTA file.
+///
+/// Opens the FASTA at `fasta_path` (requires a companion `.fai` index) and queries
+/// the region `chrom:start-end`. Coordinates are 0-based and are forwarded
+/// directly to noodles via a region string. Returns the sequence as a `String`
+/// of ASCII nucleotides, or an error if the file cannot be opened, the region
+/// is out of bounds, or the bytes are not valid UTF-8.
+///
+/// Opens and drops the file on every call. When extracting many subsequences from
+/// the same file (e.g. one per PAF alignment across many BED regions), prefer
+/// opening the file once and calling [`extract_from_fasta_coords_reader`] instead.
+pub fn extract_from_fasta_coords(
+    fasta_path: &str,
+    chrom: &str,
+    start: usize,
+    end: usize,
+) -> Result<String> {
+    let mut reader = fasta::io::indexed_reader::Builder::default()
+        .build_from_path(fasta_path)
+        .context("failed to open FASTA file")?;
+    extract_from_fasta_coords_reader(&mut reader, chrom, start, end)
+}
+
+/// Extract a subsequence from an already-open indexed FASTA reader. Reuses `reader`
+/// instead of opening the file fresh, which matters when extracting many
+/// subsequences (e.g. one per overlapping alignment across many BED regions) — see
+/// [`extract_from_fasta_coords`] for the single-shot convenience form.
+pub fn extract_from_fasta_coords_reader<R>(
+    reader: &mut fasta::io::IndexedReader<R>,
+    chrom: &str,
+    start: usize,
+    end: usize,
+) -> Result<String>
+where
+    R: std::io::BufRead + std::io::Seek,
+{
+    // `start`/`end` are 0-based half-open (per this function's contract), but noodles'
+    // "chrom:start-end" region syntax is 1-based inclusive — convert or every query
+    // silently includes one extra base before `start`.
+    let region_str = format!("{}:{}-{}", chrom, start + 1, end);
+    let parsed: noodles::core::Region = region_str
+        .parse()
+        .context("invalid FASTA region coordinates")?;
+    let sequence: Vec<u8> = reader
+        .query(&parsed)
+        .context("FASTA region query failed")?
+        .sequence()
+        .as_ref()
+        .to_vec();
+    String::from_utf8(sequence).context("FASTA sequence contains non-UTF-8 bytes")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,7 +370,7 @@ mod tests {
     #[test]
     fn uniform_phred40_gives_40() {
         // 'I' = ASCII 73, Phred 40
-        let q: String = std::iter::repeat('I').take(10).collect();
+        let q: String = "I".repeat(10);
         assert!((calculate_qscore(&q) - 40.0).abs() < 0.01);
     }
 
@@ -597,33 +649,34 @@ mod tests {
         assert_eq!(c.read_start, 2);
         assert_eq!(c.read_end, 0);
     }
-}
 
-/// Extract a subsequence from an indexed FASTA file.
-///
-/// Opens the FASTA at `fasta_path` (requires a companion `.fai` index) and queries
-/// the region `chrom:start-end`. Coordinates are 0-based and are forwarded
-/// directly to noodles via a region string. Returns the sequence as a `String`
-/// of ASCII nucleotides, or an error if the file cannot be opened, the region
-/// is out of bounds, or the bytes are not valid UTF-8.
-pub fn extract_from_fasta_coords(
-    fasta_path: &str,
-    chrom: &str,
-    start: usize,
-    end: usize,
-) -> Result<String> {
-    let mut reader = fasta::io::indexed_reader::Builder::default()
-        .build_from_path(fasta_path)
-        .context("failed to open FASTA file")?;
-    let region_str = format!("{}:{}-{}", chrom, start, end);
-    let parsed: noodles::core::Region = region_str
-        .parse()
-        .context("invalid FASTA region coordinates")?;
-    let sequence: Vec<u8> = reader
-        .query(&parsed)
-        .context("FASTA region query failed")?
-        .sequence()
-        .as_ref()
-        .to_vec();
-    String::from_utf8(sequence).context("FASTA sequence contains non-UTF-8 bytes")
+    // --- extract_from_fasta_coords: 0-based half-open coordinate contract ---
+
+    fn write_indexed_fasta(contents: &str) -> tempfile::NamedTempFile {
+        let f = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(f.path(), contents).unwrap();
+        let index = fasta::fs::index(f.path()).unwrap();
+        let mut fai_path = f.path().as_os_str().to_owned();
+        fai_path.push(".fai");
+        fasta::fai::fs::write(&fai_path, &index).unwrap();
+        f
+    }
+
+    #[test]
+    fn extract_from_fasta_coords_is_0_based_half_open() {
+        // "ACGTACGTAC" — extracting [2, 5) (0-based half-open) should give exactly
+        // the 3 bases at indices 2,3,4: "GTA". Regression test for an off-by-one
+        // where the region string was forwarded to noodles (1-based inclusive)
+        // without the +1 conversion, silently prepending one extra base.
+        let f = write_indexed_fasta(">seq1\nACGTACGTAC\n");
+        let sequence = extract_from_fasta_coords(f.path().to_str().unwrap(), "seq1", 2, 5).unwrap();
+        assert_eq!(sequence, "GTA");
+    }
+
+    #[test]
+    fn extract_from_fasta_coords_from_start() {
+        let f = write_indexed_fasta(">seq1\nACGTACGTAC\n");
+        let sequence = extract_from_fasta_coords(f.path().to_str().unwrap(), "seq1", 0, 4).unwrap();
+        assert_eq!(sequence, "ACGT");
+    }
 }

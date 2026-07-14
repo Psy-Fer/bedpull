@@ -49,6 +49,10 @@ impl PafRecord {
     /// Returns an error if the line has fewer than 12 fields or if any
     /// mandatory numeric field cannot be parsed.
     pub fn from_line(line: &str) -> Result<Self> {
+        // Trim the trailing line ending, if any (`read_line` keeps it). Without this,
+        // a trailing '\n'/'\r' ends up appended to whichever field is last on the
+        // line — silently corrupting it if that's `cg:Z:`, which breaks CIGAR parsing.
+        let line = line.trim_end_matches(['\n', '\r']);
         let fields: Vec<&str> = line.split('\t').collect();
 
         if fields.len() < 12 {
@@ -247,6 +251,35 @@ impl PafIndex {
     }
 }
 
+/// Seek to `offset` bytes into `paf_path` and parse the line there as a [`PafRecord`].
+///
+/// This is the complement of the index: given a [`PafIndexEntry::offset`] returned
+/// by [`PafIndex::query`], this function retrieves the full record without scanning
+/// the entire file. Returns an error if the file cannot be opened, the seek fails,
+/// or the line cannot be parsed.
+///
+/// Opens and drops the file on every call. When reading many records from the same
+/// file (e.g. all overlapping entries across many BED regions), prefer opening the
+/// file once and calling [`read_paf_record_from_reader`] instead.
+pub fn read_paf_record_at_offset(paf_path: &str, offset: u64) -> Result<PafRecord> {
+    let file = File::open(paf_path)?;
+    let mut reader = BufReader::new(file);
+    read_paf_record_from_reader(&mut reader, offset)
+}
+
+/// Seek to `offset` bytes into an already-open PAF file and parse the line there as
+/// a [`PafRecord`]. Reuses `reader` instead of opening the file fresh, which matters
+/// when reading many records (e.g. one per overlapping alignment across many BED
+/// regions) — see [`read_paf_record_at_offset`] for the single-shot convenience form.
+pub fn read_paf_record_from_reader(reader: &mut BufReader<File>, offset: u64) -> Result<PafRecord> {
+    reader.seek(SeekFrom::Start(offset))?;
+
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+
+    PafRecord::from_line(&line)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +315,23 @@ mod tests {
     #[test]
     fn parse_record_too_few_fields_is_error() {
         assert!(PafRecord::from_line("q1\t100\t0").is_err());
+    }
+
+    #[test]
+    fn parse_record_with_trailing_newline_when_cigar_is_last_field() {
+        // Regression test: read_line() keeps the trailing '\n'. When cg:Z: is the
+        // last tab-field on the line (common minimap2 PAF output), the newline used
+        // to get appended to the CIGAR string and break to_cigar_ops() parsing.
+        let line = format!("{PAF_LINE_A}\n");
+        let r = PafRecord::from_line(&line).unwrap();
+        assert_eq!(r.cigar.as_deref(), Some("50M"));
+    }
+
+    #[test]
+    fn parse_record_with_trailing_crlf() {
+        let line = format!("{PAF_LINE_A}\r\n");
+        let r = PafRecord::from_line(&line).unwrap();
+        assert_eq!(r.cigar.as_deref(), Some("50M"));
     }
 
     // --- PafIndex::build + query ---
@@ -360,21 +410,4 @@ mod tests {
         let r = read_paf_record_at_offset(paf.path().to_str().unwrap(), offset).unwrap();
         assert_eq!(r.query_name, "q2");
     }
-}
-
-/// Seek to `offset` bytes into `paf_path` and parse the line there as a [`PafRecord`].
-///
-/// This is the complement of the index: given a [`PafIndexEntry::offset`] returned
-/// by [`PafIndex::query`], this function retrieves the full record without scanning
-/// the entire file. Returns an error if the file cannot be opened, the seek fails,
-/// or the line cannot be parsed.
-pub fn read_paf_record_at_offset(paf_path: &str, offset: u64) -> Result<PafRecord> {
-    let mut file = File::open(paf_path)?;
-    file.seek(SeekFrom::Start(offset))?;
-
-    let mut reader = BufReader::new(file);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-
-    PafRecord::from_line(&line)
 }

@@ -107,7 +107,7 @@ pub struct Opts {
     #[clap(long = "partial", display_order = 9)]
     pub partial: bool,
 
-    /// Minimum mean Phred quality of the extracted region to include a read (BAM --fastq only; 0 = no filter)
+    /// Minimum mean Phred quality of the extracted region to include a read (BAM/CRAM only, regardless of --fastq; 0 = no filter)
     #[clap(long = "min_region_quality", default_value = "0", display_order = 10)]
     pub min_region_quality: f64,
 

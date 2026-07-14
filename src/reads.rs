@@ -6,8 +6,10 @@ use noodles::sam::alignment::record::cigar::Cigar as SamCigar;
 use noodles::sam::alignment::record::data::field::Tag as SamTag;
 
 pub use crate::cigar::ToCigarOps;
-use crate::paf::{PafIndexEntry, read_paf_record_at_offset};
-use crate::utils::{ReadCuts, calculate_qscore, extract_from_fasta_coords, get_read_cuts, revcomp};
+use crate::paf::{PafIndexEntry, read_paf_record_from_reader};
+use crate::utils::{
+    ReadCuts, calculate_qscore, extract_from_fasta_coords_reader, get_read_cuts, revcomp,
+};
 
 /// Filter and extraction settings for BAM reads.
 ///
@@ -38,8 +40,9 @@ pub struct BamConfig {
     /// Minimum mean Phred quality of the extracted subsequence.
     /// After the CIGAR walk, the quality string of the extracted slice is scored
     /// with [`crate::utils::calculate_qscore`]; reads below this
-    /// threshold are discarded. Default: `0.0` (no filter). Only meaningful when
-    /// quality scores are present (BAM input with `--fastq`).
+    /// threshold are discarded. Default: `0.0` (no filter). Applies to BAM/CRAM
+    /// input regardless of output format — the read's quality scores are always
+    /// present, whether or not `--fastq` is used for output.
     pub min_region_quality: f64,
 }
 
@@ -398,29 +401,37 @@ pub fn get_cram_reads(
 
 /// Extract subsequences from PAF alignment records that overlap a given region.
 ///
-/// For each [`PafIndexEntry`] in `entries`, reads the full PAF record from disk,
+/// For each [`PafIndexEntry`] in `entries`, reads the full PAF record via `paf_reader`,
 /// performs a CIGAR walk to compute the query-coordinate slice that corresponds to
 /// the reference region (expanded by `lflank`/`rflank`), extracts the subsequence
-/// from the query FASTA at `query_ref`, and reverse-complements it for minus-strand
-/// alignments so the output is always in target (reference) orientation.
+/// from `fasta_reader`, and reverse-complements it for minus-strand alignments so the
+/// output is always in target (reference) orientation.
+///
+/// `paf_reader` and `fasta_reader` are caller-opened and reused across calls (e.g. once
+/// per BED region, or once for an entire run across many regions) rather than being
+/// reopened per record — reopening a file per alignment is the dominant cost once BED
+/// files grow past a handful of regions.
 ///
 /// Records without a `cg:Z:` CIGAR tag or with invalid cut coordinates are skipped
 /// with a diagnostic message to stderr.
 #[allow(clippy::too_many_arguments)]
-pub fn get_paf_reads(
-    paf_path: &str,
-    query_ref: &str,
+pub fn get_paf_reads<R>(
+    paf_reader: &mut std::io::BufReader<std::fs::File>,
+    fasta_reader: &mut noodles::fasta::io::IndexedReader<R>,
     entries: &[&PafIndexEntry],
     region_start: usize,
     region_end: usize,
     lflank: usize,
     rflank: usize,
     debug: bool,
-) -> Result<Vec<PafRead>> {
+) -> Result<Vec<PafRead>>
+where
+    R: std::io::BufRead + std::io::Seek,
+{
     let mut results: Vec<PafRead> = Vec::new();
 
     for entry in entries {
-        let paf_record = read_paf_record_at_offset(paf_path, entry.offset)
+        let paf_record = read_paf_record_from_reader(paf_reader, entry.offset)
             .with_context(|| format!("failed to read PAF record at offset {}", entry.offset))?;
 
         if paf_record.target_start > region_start {
@@ -483,11 +494,13 @@ pub fn get_paf_reads(
             );
         }
 
-        let sequence =
-            extract_from_fasta_coords(query_ref, &paf_record.query_name, query_start, query_end)
-                .with_context(|| {
-                    format!("failed to extract sequence for {}", paf_record.query_name)
-                })?;
+        let sequence = extract_from_fasta_coords_reader(
+            fasta_reader,
+            &paf_record.query_name,
+            query_start,
+            query_end,
+        )
+        .with_context(|| format!("failed to extract sequence for {}", paf_record.query_name))?;
 
         let sequence = if paf_record.strand == '-' {
             revcomp(&sequence)
@@ -512,6 +525,8 @@ pub fn get_paf_reads(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use std::io::BufReader;
 
     #[test]
     fn bam_config_default_has_no_filters() {
@@ -611,5 +626,77 @@ mod tests {
         };
         let resolved = resolve_cuts(&read_cuts, &partial_config(), 110, 150, 100, 300);
         assert_eq!(resolved, Some((0, 300, 110, 150)));
+    }
+
+    // --- get_paf_reads: reused-reader plumbing ---
+    //
+    // Exercises get_paf_reads with caller-opened, reused reader handles (the fix for
+    // reopening the PAF/FASTA file per record). Calls it twice on the same open
+    // readers, as extract_from_paf now does once per BED region, to confirm seeking
+    // back into an already-open PAF file and re-querying an already-open indexed
+    // FASTA reader both work correctly across repeated calls.
+
+    #[test]
+    fn get_paf_reads_reuses_readers_across_repeated_calls() {
+        // 20bp query, straight 20M alignment to chr1:100-120 — no indels, so the
+        // extracted length should exactly match the requested reference span.
+        let paf_line = "q1\t20\t0\t20\t+\tchr1\t1000\t100\t120\t20\t20\t60\tcg:Z:20M\n";
+        let mut paf_file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut paf_file, paf_line.as_bytes()).unwrap();
+
+        let mut fasta_file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut fasta_file, b">q1\nACGTACGTACGTACGTACGT\n").unwrap();
+        let fasta_index = noodles::fasta::fs::index(fasta_file.path()).unwrap();
+        let mut fasta_reader = noodles::fasta::io::indexed_reader::Builder::default()
+            .set_index(fasta_index)
+            .build_from_path(fasta_file.path())
+            .unwrap();
+
+        let mut paf_reader = BufReader::new(File::open(paf_file.path()).unwrap());
+        let entry = PafIndexEntry {
+            offset: 0,
+            target_start: 100,
+            target_end: 120,
+        };
+        let entries = [&entry];
+
+        // First call: chr1:105-110 (0-based), 5bp span.
+        let reads = get_paf_reads(
+            &mut paf_reader,
+            &mut fasta_reader,
+            &entries,
+            105,
+            110,
+            0,
+            0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(reads.len(), 1);
+        let (sequence, query_name, query_start, query_end, strand, hap) = &reads[0];
+        assert_eq!(sequence.len(), 5);
+        assert_eq!(query_name, "q1");
+        assert_eq!((*query_start, *query_end), (5, 10));
+        assert_eq!(*strand, '+');
+        assert_eq!(*hap, 0);
+
+        // Second call on the SAME open readers, different region — proves the PAF
+        // reader seeks correctly and the FASTA reader re-queries correctly instead of
+        // returning stale state from the first call.
+        let reads2 = get_paf_reads(
+            &mut paf_reader,
+            &mut fasta_reader,
+            &entries,
+            110,
+            118,
+            0,
+            0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(reads2.len(), 1);
+        let (sequence2, _, query_start2, query_end2, _, _) = &reads2[0];
+        assert_eq!(sequence2.len(), 8);
+        assert_eq!((*query_start2, *query_end2), (10, 18));
     }
 }

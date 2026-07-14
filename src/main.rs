@@ -12,7 +12,7 @@ use noodles::fasta::repository::adapters::IndexedReader as FastaIndexedReader;
 use std::collections::HashSet;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 /// Replace empty `VN:` fields in @PG and @RG header lines.
@@ -191,6 +191,28 @@ pub fn extract_from_bam(
         ]);
     }
 
+    // Open the BAM once and reuse it for every region — reopening + re-parsing the
+    // header per region dominates runtime once a BED file has more than a handful
+    // of regions.
+    let mut reader = bam::io::indexed_reader::Builder::default()
+        .build_from_path(&opts.bam)
+        .context("failed to open BAM file")?;
+    let header = reader
+        .read_header()
+        .or_else(|e| {
+            if e.kind() == std::io::ErrorKind::InvalidData {
+                eprintln!(
+                    "Warning: BAM header has non-standard fields (e.g. empty VN: in @PG \
+                     records — produced by some samtools versions). Retrying with lenient parser."
+                );
+                read_bam_header_lenient(&opts.bam)
+                    .map_err(|ae| std::io::Error::new(std::io::ErrorKind::InvalidData, ae))
+            } else {
+                Err(e)
+            }
+        })
+        .context("failed to read BAM header")?;
+
     for (region, region_name, chr) in regions.iter() {
         if opts.debug {
             eprintln!("===============================");
@@ -203,25 +225,6 @@ pub fn extract_from_bam(
             continue;
         }
 
-        // open bam
-        let mut reader = bam::io::indexed_reader::Builder::default()
-            .build_from_path(&opts.bam)
-            .context("failed to open BAM file")?;
-        let header = reader
-            .read_header()
-            .or_else(|e| {
-                if e.kind() == std::io::ErrorKind::InvalidData {
-                    eprintln!(
-                        "Warning: BAM header has non-standard fields (e.g. empty VN: in @PG \
-                         records — produced by some samtools versions). Retrying with lenient parser."
-                    );
-                    read_bam_header_lenient(&opts.bam)
-                        .map_err(|ae| std::io::Error::new(std::io::ErrorKind::InvalidData, ae))
-                } else {
-                    Err(e)
-                }
-            })
-            .context("failed to read BAM header")?;
         let query = reader
             .query(&header, region)
             .context("BAM region query failed")?;
@@ -324,6 +327,15 @@ pub fn extract_from_cram(
         fasta::Repository::default()
     };
 
+    // Open the CRAM once and reuse it for every region — reopening + re-parsing the
+    // header per region dominates runtime once a BED file has more than a handful
+    // of regions.
+    let mut reader = cram::io::indexed_reader::Builder::default()
+        .set_reference_sequence_repository(reference_repo.clone())
+        .build_from_path(&opts.cram)
+        .context("failed to open CRAM file")?;
+    let header = reader.read_header().context("failed to read CRAM header")?;
+
     for (region, region_name, chr) in regions.iter() {
         if opts.debug {
             eprintln!("===============================");
@@ -336,11 +348,6 @@ pub fn extract_from_cram(
             continue;
         }
 
-        let mut reader = cram::io::indexed_reader::Builder::default()
-            .set_reference_sequence_repository(reference_repo.clone())
-            .build_from_path(&opts.cram)
-            .context("failed to open CRAM file")?;
-        let header = reader.read_header().context("failed to read CRAM header")?;
         let query = reader
             .query(&header, region)
             .context("CRAM region query failed")?;
@@ -473,6 +480,16 @@ pub fn extract_from_paf(
         PafIndex::build(paf_path).context("failed to build PAF index")?
     };
 
+    // Open the PAF file and query FASTA once and reuse them for every region/record —
+    // reopening per record dominates runtime once a BED file has more than a handful
+    // of regions.
+    let mut paf_reader = BufReader::new(
+        File::open(paf_path).with_context(|| format!("failed to open PAF file: {paf_path}"))?,
+    );
+    let mut fasta_reader = fasta::io::indexed_reader::Builder::default()
+        .build_from_path(query_ref)
+        .with_context(|| format!("failed to open query_ref FASTA: {query_ref}"))?;
+
     // for each region, get paf regions and extract sequences
     for (region, region_name, chr) in regions.iter() {
         if opts.debug {
@@ -504,8 +521,8 @@ pub fn extract_from_paf(
         }
 
         let reads = get_paf_reads(
-            paf_path,
-            query_ref,
+            &mut paf_reader,
+            &mut fasta_reader,
             &overlapping_entries,
             region_start,
             region_end,

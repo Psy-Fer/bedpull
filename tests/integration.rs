@@ -110,7 +110,7 @@ fn write_fastq_produces_correct_output() {
 
 #[test]
 fn qscore_uniform_phred40() {
-    let q: String = std::iter::repeat('I').take(5).collect();
+    let q: String = "I".repeat(5);
     assert!((calculate_qscore(&q) - 40.0).abs() < 0.01);
 }
 
@@ -119,7 +119,7 @@ fn qscore_below_threshold_detection() {
     // Phred 0 ('!') should give score of 0.0
     assert!((calculate_qscore("!") - 0.0).abs() < 0.01);
     // Phred 40 ('I') should pass a threshold of 20
-    let q: String = std::iter::repeat('I').take(5).collect();
+    let q: String = "I".repeat(5);
     assert!(calculate_qscore(&q) > 20.0);
 }
 
