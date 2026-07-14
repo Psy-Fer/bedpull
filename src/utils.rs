@@ -1,6 +1,4 @@
 use anyhow::{Context, Result};
-use bio::alignment::pairwise::Scoring;
-use bio::alignment::poa::Aligner as poAligner;
 use noodles::fasta;
 use noodles::sam::alignment::record::cigar::op::Kind;
 use std::f64;
@@ -192,22 +190,6 @@ pub fn get_read_cuts(
         ref_start: r_start,
         ref_end: r_end,
     }
-}
-
-pub fn _get_consensus(reads: &[Vec<u8>]) -> Vec<u8> {
-    let scoring = Scoring::new(-1, 0, |a: u8, b: u8| if a == b { 1i32 } else { -1i32 });
-    // use first sequence as the reference
-    let first_read = &reads[0];
-    let mut aligner = poAligner::new(scoring, first_read);
-    for read in reads[1..].iter() {
-        // add all other reads to graph
-        aligner.global(read).add_to_graph();
-    }
-
-    // get consensus
-    let consensus: Vec<u8> = aligner.consensus();
-
-    consensus
 }
 
 /// Parse a BED file and return a list of `(region, name, chromosome)` triples.

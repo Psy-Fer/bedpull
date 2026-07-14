@@ -133,6 +133,31 @@ bedpull --paf hg002pat_to_ref.paf \
         --output paternal_sequences.fasta
 ```
 
+### Per-Haplotype Consensus Building
+`bedpull` doesn't build consensus sequences itself — for that, pair it with
+[poa-consensus](https://github.com/Psy-Fer/poa-consensus), a banded partial-order
+alignment tool built for exactly this. Use `--hap_split` to bin reads from a
+BAM's `HP` tag (or a PAF's `hp:i:` tag) into one FASTA per haplotype, then run
+`poa-consensus` on each file to get a per-haplotype consensus. Use a single-region
+BED (or one BED file per locus) so each haplotype FASTA holds reads from only
+that region — `poa-consensus` builds one consensus per input file.
+
+```bash
+# 1. Extract reads for one region, split by haplotype
+bedpull --bam alignments.bam \
+        --bed rfc1.bed \
+        --hap_split \
+        --output rfc1_reads.fasta
+# -> rfc1_reads.h0.fasta (unphased), rfc1_reads.h1.fasta, rfc1_reads.h2.fasta
+
+# 2. Install poa-consensus (one-time)
+cargo install poa-consensus --features cli
+
+# 3. Build a consensus for each phased haplotype
+poa-consensus rfc1_reads.h1.fasta > rfc1_h1_consensus.fasta
+poa-consensus rfc1_reads.h2.fasta > rfc1_h2_consensus.fasta
+```
+
 ## How It Works
 
 ### BAM Extraction
@@ -213,18 +238,8 @@ samtools faidx assembly.fasta
 
 ## TODO
 
-- map quality filtering
-- fastq mean qscore filtering (for the subqual string)
-- secondary and sup alignment handling
-- phased haplotype handling
-- make a consensus from reads of same region/haplotype
-- minimum number of reads to use for consensus building
-- reorganisation of some functions to house similar things together (paf and bam are a shambles)
-- better handle 4th column in bed file for naming
-- rethink header structure, make some standard spec for it across all outputs
 - add threading for very large bams/pafs
 - add more checks for files, write permissions, arg combination limits (like --fastq only with --bam), etc
-- add some example files for people to test/play with
 
 
 ## Citation
@@ -250,6 +265,7 @@ Issues and pull requests welcome!
 ## Related Tools
 
 - [bladerunner](https://github.com/Psy-Fer/bladerunner) - STR detection and genotyping
+- [poa-consensus](https://github.com/Psy-Fer/poa-consensus) - Build consensus sequences from reads extracted by bedpull
 - [samtools](http://www.htslib.org/) - SAM/BAM manipulation
 - [bedtools](https://bedtools.readthedocs.io/) - Genome arithmetic
 - [minimap2](https://github.com/lh3/minimap2) - Sequence alignment
