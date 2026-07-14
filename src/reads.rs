@@ -79,6 +79,53 @@ pub type BamRead = (String, Vec<u8>, String, usize, usize, u8);
 /// - `haplotype` — value of the `hp:i:` tag; `0` means absent (unphased).
 pub type PafRead = (String, String, usize, usize, char, u8);
 
+/// Resolve the final `(read_start, read_end, ref_start, ref_end)` for a read from
+/// its raw [`ReadCuts`], applying partial-overlap fallback rules.
+///
+/// `get_read_cuts` fires on `ref_pos == region_start` and `ref_pos == region_end`. When
+/// the alignment starts after `region_start`, the `region_start` trigger never fires;
+/// `read_cuts.ref_start`/`read_cuts.read_start` end up holding the `region_end` position
+/// instead (see [`get_read_cuts`][crate::utils::get_read_cuts] docs), and `read_end`/`ref_end`
+/// stay `0`. This function undoes that mislabelling so callers get the reference span
+/// actually covered by the returned slice, not the raw (and sometimes swapped) fields.
+/// Returns `None` when the read doesn't satisfy the region and `config.partial` is `false`
+/// (the read should be skipped).
+fn resolve_cuts(
+    read_cuts: &ReadCuts,
+    config: &BamConfig,
+    align_start: usize,
+    align_end: usize,
+    region_start: usize,
+    seq_len: usize,
+) -> Option<(usize, usize, usize, usize)> {
+    if config.partial && align_start > region_start {
+        let (read_end, ref_end) = if read_cuts.read_start > 0 {
+            (read_cuts.read_start, read_cuts.ref_start)
+        } else {
+            (seq_len, align_end)
+        };
+        Some((0, read_end, align_start, ref_end))
+    } else if read_cuts.read_end == 0 {
+        if config.partial {
+            Some((
+                read_cuts.read_start,
+                seq_len,
+                read_cuts.ref_start,
+                align_end,
+            ))
+        } else {
+            None
+        }
+    } else {
+        Some((
+            read_cuts.read_start,
+            read_cuts.read_end,
+            read_cuts.ref_start,
+            read_cuts.ref_end,
+        ))
+    }
+}
+
 /// Extract subsequences from all BAM reads that overlap a given region.
 ///
 /// Iterates `query` (a BAM region query result), applies the filters defined in
@@ -192,25 +239,15 @@ where
         };
 
         let read_cuts: ReadCuts = get_read_cuts(&cigar, align_start, eff_start, eff_end);
-        // get_read_cuts fires on ref_pos == region_start and ref_pos == region_end.
-        // When align_start > region_start, the start trigger never fires; instead get_read_cuts
-        // stores the region_end position in read_start (wrong field) and leaves read_end = 0.
-        // Partial mode detects this and swaps the fields; see utils tests for exact semantics.
-        let (read_start, read_end) = if config.partial && align_start > region_start {
-            let end = if read_cuts.read_start > 0 {
-                read_cuts.read_start
-            } else {
-                i_seq.len()
-            };
-            (0, end)
-        } else if read_cuts.read_end == 0 {
-            if config.partial {
-                (read_cuts.read_start, i_seq.len())
-            } else {
-                continue;
-            }
-        } else {
-            (read_cuts.read_start, read_cuts.read_end)
+        let Some((read_start, read_end, ref_start, ref_end)) = resolve_cuts(
+            &read_cuts,
+            config,
+            align_start,
+            align_end,
+            region_start,
+            i_seq.len(),
+        ) else {
+            continue;
         };
         let subseq = i_seq[read_start..read_end].to_vec();
         let subqual: String = quality_scores_str[read_start..read_end].to_string();
@@ -228,14 +265,7 @@ where
             .map(|i| i as u8)
             .unwrap_or(0);
 
-        results.push((
-            name,
-            subseq,
-            subqual,
-            read_cuts.ref_start,
-            read_cuts.ref_end,
-            hap,
-        ));
+        results.push((name, subseq, subqual, ref_start, ref_end, hap));
     }
 
     Ok(results)
@@ -329,21 +359,15 @@ pub fn get_cram_reads(
         };
 
         let read_cuts = get_read_cuts(&cigar, align_start, eff_start, eff_end);
-        let (read_start, read_end) = if config.partial && align_start > region_start {
-            let end = if read_cuts.read_start > 0 {
-                read_cuts.read_start
-            } else {
-                i_seq.len()
-            };
-            (0, end)
-        } else if read_cuts.read_end == 0 {
-            if config.partial {
-                (read_cuts.read_start, i_seq.len())
-            } else {
-                continue;
-            }
-        } else {
-            (read_cuts.read_start, read_cuts.read_end)
+        let Some((read_start, read_end, ref_start, ref_end)) = resolve_cuts(
+            &read_cuts,
+            config,
+            align_start,
+            align_end,
+            region_start,
+            i_seq.len(),
+        ) else {
+            continue;
         };
 
         let subseq = i_seq[read_start..read_end].to_vec();
@@ -367,14 +391,7 @@ pub fn get_cram_reads(
             })
             .unwrap_or(0);
 
-        results.push((
-            name,
-            subseq,
-            subqual,
-            read_cuts.ref_start,
-            read_cuts.ref_end,
-            hap,
-        ));
+        results.push((name, subseq, subqual, ref_start, ref_end, hap));
     }
     Ok(results)
 }
@@ -520,5 +537,79 @@ mod tests {
         assert!(!c.include_supplementary);
         assert!(c.partial);
         assert_eq!(c.min_region_quality, 15.0);
+    }
+
+    fn partial_config() -> BamConfig {
+        BamConfig {
+            partial: true,
+            ..BamConfig::default()
+        }
+    }
+
+    #[test]
+    fn resolve_cuts_full_span_returns_read_cuts_unchanged() {
+        let read_cuts = ReadCuts {
+            read_start: 10,
+            read_end: 50,
+            ref_start: 100,
+            ref_end: 140,
+        };
+        let resolved = resolve_cuts(&read_cuts, &BamConfig::default(), 90, 200, 100, 300);
+        assert_eq!(resolved, Some((10, 50, 100, 140)));
+    }
+
+    #[test]
+    fn resolve_cuts_non_partial_incomplete_overlap_is_skipped() {
+        // align_start == region_start (not left-partial) but read_end == 0 (never reached
+        // region_end) and partial is off: the read should be skipped entirely.
+        let read_cuts = ReadCuts {
+            read_start: 10,
+            read_end: 0,
+            ref_start: 100,
+            ref_end: 0,
+        };
+        let resolved = resolve_cuts(&read_cuts, &BamConfig::default(), 100, 130, 100, 300);
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn resolve_cuts_right_partial_takes_rest_of_read() {
+        // Alignment starts at region_start but ends before region_end: right-partial.
+        let read_cuts = ReadCuts {
+            read_start: 10,
+            read_end: 0,
+            ref_start: 100,
+            ref_end: 0,
+        };
+        let resolved = resolve_cuts(&read_cuts, &partial_config(), 100, 130, 100, 300);
+        // ref_end falls back to align_end (130) since the region end was never reached.
+        assert_eq!(resolved, Some((10, 300, 100, 130)));
+    }
+
+    #[test]
+    fn resolve_cuts_left_partial_starts_from_zero() {
+        // Alignment starts after region_start: left-partial. get_read_cuts stores the
+        // region_end position in read_start/ref_start (see its docs).
+        let read_cuts = ReadCuts {
+            read_start: 40,
+            read_end: 0,
+            ref_start: 140,
+            ref_end: 0,
+        };
+        let resolved = resolve_cuts(&read_cuts, &partial_config(), 110, 200, 100, 300);
+        assert_eq!(resolved, Some((0, 40, 110, 140)));
+    }
+
+    #[test]
+    fn resolve_cuts_left_partial_never_reaches_region_end() {
+        // Left-partial and the read also ends before region_end is reached at all.
+        let read_cuts = ReadCuts {
+            read_start: 0,
+            read_end: 0,
+            ref_start: 0,
+            ref_end: 0,
+        };
+        let resolved = resolve_cuts(&read_cuts, &partial_config(), 110, 150, 100, 300);
+        assert_eq!(resolved, Some((0, 300, 110, 150)));
     }
 }

@@ -231,6 +231,13 @@ samtools faidx assembly.fasta
 >read_name|reference_region|alignment_info
 ```
 
+With `--partial`, a read that doesn't fully span the requested region gets an extra
+`missing_left=Nbp` and/or `missing_right=Nbp` suffix showing how many reference bases
+of the region (or `--flanks` window) fall outside the read's alignment:
+```
+>read1|chr4:39260000-39380000|RFC1|missing_left=3480bp|missing_right=55332bp
+```
+
 **PAF extraction:**
 ```
 >query_name|ref_region:start-end|query_region:start-end

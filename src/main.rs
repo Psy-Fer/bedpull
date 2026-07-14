@@ -77,6 +77,26 @@ fn effective_flanks(opts: &Opts) -> (usize, usize) {
     cli::resolve_flanks(opts.flanks, opts.lflank, opts.rflank)
 }
 
+/// Build a header suffix describing bases missing from a `--partial` read whose
+/// alignment didn't fully span the requested (region ± flank) window, e.g.
+/// `|missing_left=12bp|missing_right=8bp`. Returns an empty string when the read
+/// covers the full window (the normal, non-partial case).
+fn missing_bases_suffix(
+    desired_start: usize,
+    desired_end: usize,
+    ref_start: usize,
+    ref_end: usize,
+) -> String {
+    let mut suffix = String::new();
+    if ref_start > desired_start {
+        suffix.push_str(&format!("|missing_left={}bp", ref_start - desired_start));
+    }
+    if ref_end < desired_end {
+        suffix.push_str(&format!("|missing_right={}bp", desired_end - ref_end));
+    }
+    suffix
+}
+
 fn bam_config(opts: &Opts) -> BamConfig {
     BamConfig {
         min_mapq: opts.min_mapq,
@@ -228,7 +248,9 @@ pub fn extract_from_bam(
             .map(usize::from)
             .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
         // write to fasta or fastq
-        for (name, subseq, subqual, _ref_start, _ref_end, hap) in overlapping_reads {
+        let desired_start = region_start.saturating_sub(lflank);
+        let desired_end = region_end + rflank;
+        for (name, subseq, subqual, ref_start, ref_end, hap) in overlapping_reads {
             if opts.dedup && !seen.insert(name.clone()) {
                 continue;
             }
@@ -237,9 +259,11 @@ pub fn extract_from_bam(
             } else {
                 String::new()
             };
+            let missing_suffix =
+                missing_bases_suffix(desired_start, desired_end, ref_start, ref_end);
             let head = format!(
-                "{}|{}:{}-{}|{}{}",
-                name, chr, region_start, region_end, region_name, hap_suffix
+                "{}|{}:{}-{}|{}{}{}",
+                name, chr, region_start, region_end, region_name, hap_suffix, missing_suffix
             );
             let seq_str =
                 std::str::from_utf8(&subseq).context("BAM sequence contains invalid UTF-8")?;
@@ -340,7 +364,9 @@ pub fn extract_from_cram(
             .map(usize::from)
             .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
 
-        for (name, subseq, subqual, _ref_start, _ref_end, hap) in overlapping_reads {
+        let desired_start = region_start.saturating_sub(lflank);
+        let desired_end = region_end + rflank;
+        for (name, subseq, subqual, ref_start, ref_end, hap) in overlapping_reads {
             if opts.dedup && !seen.insert(name.clone()) {
                 continue;
             }
@@ -349,9 +375,11 @@ pub fn extract_from_cram(
             } else {
                 String::new()
             };
+            let missing_suffix =
+                missing_bases_suffix(desired_start, desired_end, ref_start, ref_end);
             let head = format!(
-                "{}|{}:{}-{}|{}{}",
-                name, chr, region_start, region_end, region_name, hap_suffix
+                "{}|{}:{}-{}|{}{}{}",
+                name, chr, region_start, region_end, region_name, hap_suffix, missing_suffix
             );
             let seq_str =
                 std::str::from_utf8(&subseq).context("CRAM sequence contains invalid UTF-8")?;
