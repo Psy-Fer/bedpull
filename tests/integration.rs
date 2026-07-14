@@ -158,7 +158,7 @@ fn bam_mode_rfc1_returns_reads() {
     let (mut reader, header, region) = bam_query(bam_path, "chr4:39318077-39318136");
     let query = reader.query(&header, &region).expect("BAM query failed");
 
-    let reads = bedpull::get_bam_reads(&BamConfig::default(), query, &region, 0, 0)
+    let (reads, _) = bedpull::get_bam_reads(&BamConfig::default(), query, &region, 0, 0)
         .expect("get_bam_reads failed");
 
     // 40 reads fully span chr4:39318077-39318136 in the test BAM
@@ -167,6 +167,24 @@ fn bam_mode_rfc1_returns_reads() {
         assert!(!name.is_empty());
         assert!(!seq.is_empty());
     }
+}
+
+#[test]
+fn bam_mode_candidates_seen_counts_all_overlapping_reads_before_filtering() {
+    // candidates_seen should count every read the query yields, including the 4 that
+    // only partially overlap and get excluded by resolve_cuts in non-partial mode —
+    // i.e. candidates_seen (44) > reads.len() (40), distinguishing "nothing overlapped"
+    // from "some candidates were filtered out" for unmapped-region reporting.
+    let bam_path = Path::new("examples/rfc1_test.bam");
+    let (mut reader, header, region) = bam_query(bam_path, "chr4:39318077-39318136");
+    let query = reader.query(&header, &region).expect("BAM query failed");
+
+    let (reads, candidates_seen) =
+        bedpull::get_bam_reads(&BamConfig::default(), query, &region, 0, 0)
+            .expect("get_bam_reads failed");
+
+    assert_eq!(reads.len(), 40);
+    assert_eq!(candidates_seen, 44);
 }
 
 #[test]
@@ -179,7 +197,7 @@ fn bam_mode_partial_includes_more_reads() {
         partial: true,
         ..BamConfig::default()
     };
-    let reads =
+    let (reads, _) =
         bedpull::get_bam_reads(&config, query, &region, 0, 0).expect("get_bam_reads failed");
 
     // 44 reads overlap the region with --partial (40 spanning + 4 partial)
@@ -196,11 +214,12 @@ fn bam_mode_flanks_extend_extracted_sequence() {
 
     let (mut r0, h0, region0) = bam_query(bam_path, "chr4:39318077-39318136");
     let q0 = r0.query(&h0, &region0).unwrap();
-    let reads_no_flank = bedpull::get_bam_reads(&BamConfig::default(), q0, &region0, 0, 0).unwrap();
+    let (reads_no_flank, _) =
+        bedpull::get_bam_reads(&BamConfig::default(), q0, &region0, 0, 0).unwrap();
 
     let (mut r1, h1, region1) = bam_query(bam_path, "chr4:39318077-39318136");
     let q1 = r1.query(&h1, &region1).unwrap();
-    let reads_with_flank =
+    let (reads_with_flank, _) =
         bedpull::get_bam_reads(&BamConfig::default(), q1, &region1, 100, 100).unwrap();
 
     // Flanks can pull in reads whose effective window is clamped to alignment end,
@@ -225,7 +244,7 @@ fn cram_mode_rfc1_returns_same_reads_as_bam() {
     let (mut reader, header, region) = cram_query(cram_path, "chr4:39318077-39318136");
     let query = reader.query(&header, &region).expect("CRAM query failed");
 
-    let reads = bedpull::get_cram_reads(&BamConfig::default(), query, &region, 0, 0)
+    let (reads, _) = bedpull::get_cram_reads(&BamConfig::default(), query, &region, 0, 0)
         .expect("get_cram_reads failed");
 
     // Should match the 40 spanning reads returned by BAM mode
@@ -246,7 +265,7 @@ fn cram_mode_partial_includes_more_reads() {
         partial: true,
         ..BamConfig::default()
     };
-    let reads =
+    let (reads, _) =
         bedpull::get_cram_reads(&config, query, &region, 0, 0).expect("get_cram_reads failed");
 
     assert_eq!(
@@ -266,12 +285,12 @@ fn cram_mode_flanks_extend_extracted_sequence() {
 
     let (mut r0, h0, region0) = cram_query(cram_path, "chr4:39318077-39318136");
     let q0 = r0.query(&h0, &region0).unwrap();
-    let reads_no_flank =
+    let (reads_no_flank, _) =
         bedpull::get_cram_reads(&BamConfig::default(), q0, &region0, 0, 0).unwrap();
 
     let (mut r1, h1, region1) = cram_query(cram_path, "chr4:39318077-39318136");
     let q1 = r1.query(&h1, &region1).unwrap();
-    let reads_with_flank =
+    let (reads_with_flank, _) =
         bedpull::get_cram_reads(&BamConfig::default(), q1, &region1, 100, 100).unwrap();
 
     assert!(
@@ -291,12 +310,13 @@ fn cram_mode_sequences_match_bam_mode() {
     let bam_path = Path::new("examples/rfc1_test.bam");
     let (mut br, bh, bregion) = bam_query(bam_path, "chr4:39318077-39318136");
     let bq = br.query(&bh, &bregion).unwrap();
-    let mut bam_reads = bedpull::get_bam_reads(&BamConfig::default(), bq, &bregion, 0, 0).unwrap();
+    let (mut bam_reads, _) =
+        bedpull::get_bam_reads(&BamConfig::default(), bq, &bregion, 0, 0).unwrap();
 
     let cram_path = Path::new("examples/rfc1_test.cram");
     let (mut cr, ch, cregion) = cram_query(cram_path, "chr4:39318077-39318136");
     let cq = cr.query(&ch, &cregion).unwrap();
-    let mut cram_reads =
+    let (mut cram_reads, _) =
         bedpull::get_cram_reads(&BamConfig::default(), cq, &cregion, 0, 0).unwrap();
 
     assert_eq!(

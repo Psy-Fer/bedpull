@@ -11,6 +11,13 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`--unmapped <file>`** — write input BED regions that produced no output to a file, each
+  preceded by a `#reason` comment (similar to liftOver's `-unmapped`), across all three modes.
+  Distinguishes "no overlapping reads/alignments" from "candidates existed but were all filtered
+  out" from "all matches already emitted for another region (--dedup)" from "region explicitly
+  skipped (chromosome name contains '#')". `get_bam_reads`/`get_cram_reads` now return
+  `(reads, candidates_seen)` instead of just `reads` to support this.
+
 - **`--min_partial_coverage`** — minimum fraction (0.0-1.0) of the requested (region ± flanks)
   window a `--partial` read must cover to be included, similar to liftOver's `-minMatch`.
   Default `0.0` (no filter, any overlap accepted); requires `--partial`.

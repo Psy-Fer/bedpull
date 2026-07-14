@@ -132,6 +132,41 @@ fn open_writer(path: &Path) -> Result<BufWriter<File>> {
     Ok(BufWriter::new(f))
 }
 
+/// Open a writer for an optional `--<flag>`-style path option: `None` if the option
+/// wasn't set (still `"None"`), stdout if set to `-`, otherwise a truncated file.
+fn open_optional_writer(path: &Path) -> Result<Option<Box<dyn std::io::Write>>> {
+    if path.to_str() == Some("None") {
+        return Ok(None);
+    }
+    if cli::is_stdout(path) {
+        return Ok(Some(Box::new(BufWriter::new(std::io::stdout()))));
+    }
+    let f = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .with_context(|| format!("failed to open file: {}", path.display()))?;
+    Ok(Some(Box::new(BufWriter::new(f))))
+}
+
+/// Write one unmapped-region entry to `--unmapped` output: a `#reason` comment line
+/// followed by the input BED record (chrom, start, end, name), mirroring liftOver's
+/// own unmapped-file convention.
+fn write_unmapped_region(
+    writer: &mut dyn std::io::Write,
+    chr: &str,
+    region_start: usize,
+    region_end: usize,
+    region_name: &str,
+    reason: &str,
+) -> Result<()> {
+    writeln!(writer, "#{reason}").context("failed to write unmapped reason comment")?;
+    writeln!(writer, "{chr}\t{region_start}\t{region_end}\t{region_name}")
+        .context("failed to write unmapped BED record")?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let opts: Opts = Opts::parse();
     if opts.debug {
@@ -214,6 +249,8 @@ pub fn extract_from_bam(
         })
         .context("failed to read BAM header")?;
 
+    let mut unmapped_writer = open_optional_writer(&opts.unmapped)?;
+
     for (region, region_name, chr) in regions.iter() {
         if opts.debug {
             eprintln!("===============================");
@@ -221,8 +258,29 @@ pub fn extract_from_bam(
             eprintln!("===============================");
         }
 
+        let region_start =
+            region.interval().start().map(usize::from).ok_or_else(|| {
+                anyhow::anyhow!("BED region '{}' has unbounded start", region_name)
+            })?;
+        let region_end = region
+            .interval()
+            .end()
+            .map(usize::from)
+            .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
+
         if region.name().contains(&b'#') {
+            let reason = "region skipped (chromosome name contains '#')";
             eprintln!("Region {} has a #, skipping", region_name);
+            if let Some(w) = unmapped_writer.as_mut() {
+                write_unmapped_region(
+                    w.as_mut(),
+                    chr,
+                    region_start,
+                    region_end,
+                    region_name,
+                    reason,
+                )?;
+            }
             continue;
         }
 
@@ -234,30 +292,42 @@ pub fn extract_from_bam(
         // apply filters (full length, quality, etc)
         // cut out sequence (optionally qstring too and do quality calculation)
         let (lflank, rflank) = effective_flanks(opts);
-        let overlapping_reads = get_bam_reads(&bam_config(opts), query, region, lflank, rflank)?;
+        let (overlapping_reads, candidates_seen) =
+            get_bam_reads(&bam_config(opts), query, region, lflank, rflank)?;
         if overlapping_reads.is_empty() {
+            let reason = if candidates_seen == 0 {
+                "no overlapping reads found".to_string()
+            } else {
+                format!(
+                    "{candidates_seen} candidate read(s) found but all were filtered out (--min_mapq/--include_secondary/--include_supplementary/--partial/--min_partial_coverage/--min_region_quality)"
+                )
+            };
             eprintln!(
                 "No reads found for region in bam file. Skipping region: {}",
                 region_name
             );
+            if let Some(w) = unmapped_writer.as_mut() {
+                write_unmapped_region(
+                    w.as_mut(),
+                    chr,
+                    region_start,
+                    region_end,
+                    region_name,
+                    &reason,
+                )?;
+            }
             continue;
         }
-        let region_start =
-            region.interval().start().map(usize::from).ok_or_else(|| {
-                anyhow::anyhow!("BED region '{}' has unbounded start", region_name)
-            })?;
-        let region_end = region
-            .interval()
-            .end()
-            .map(usize::from)
-            .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
         // write to fasta or fastq
         let desired_start = region_start.saturating_sub(lflank);
         let desired_end = region_end + rflank;
+        let matched_count = overlapping_reads.len();
+        let mut written_count = 0usize;
         for (name, subseq, subqual, ref_start, ref_end, hap) in overlapping_reads {
             if opts.dedup && !seen.insert(name.clone()) {
                 continue;
             }
+            written_count += 1;
             let hap_suffix = if hap > 0 {
                 format!("|h{}", hap)
             } else {
@@ -290,6 +360,21 @@ pub fn extract_from_bam(
             } else {
                 write_fasta_record(writer, &head, seq_str)
                     .context("failed to write FASTA record")?;
+            }
+        }
+        if written_count == 0 {
+            let reason = format!(
+                "{matched_count} matching read(s) found but all were already emitted for another region (--dedup)"
+            );
+            if let Some(w) = unmapped_writer.as_mut() {
+                write_unmapped_region(
+                    w.as_mut(),
+                    chr,
+                    region_start,
+                    region_end,
+                    region_name,
+                    &reason,
+                )?;
             }
         }
     }
@@ -337,6 +422,8 @@ pub fn extract_from_cram(
         .context("failed to open CRAM file")?;
     let header = reader.read_header().context("failed to read CRAM header")?;
 
+    let mut unmapped_writer = open_optional_writer(&opts.unmapped)?;
+
     for (region, region_name, chr) in regions.iter() {
         if opts.debug {
             eprintln!("===============================");
@@ -344,24 +431,6 @@ pub fn extract_from_cram(
             eprintln!("===============================");
         }
 
-        if region.name().contains(&b'#') {
-            eprintln!("Region {} has a #, skipping", region_name);
-            continue;
-        }
-
-        let query = reader
-            .query(&header, region)
-            .context("CRAM region query failed")?;
-
-        let (lflank, rflank) = effective_flanks(opts);
-        let overlapping_reads = get_cram_reads(&bam_config(opts), query, region, lflank, rflank)?;
-        if overlapping_reads.is_empty() {
-            eprintln!(
-                "No reads found for region in CRAM file. Skipping region: {}",
-                region_name
-            );
-            continue;
-        }
         let region_start =
             region.interval().start().map(usize::from).ok_or_else(|| {
                 anyhow::anyhow!("BED region '{}' has unbounded start", region_name)
@@ -372,12 +441,63 @@ pub fn extract_from_cram(
             .map(usize::from)
             .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
 
+        if region.name().contains(&b'#') {
+            let reason = "region skipped (chromosome name contains '#')";
+            eprintln!("Region {} has a #, skipping", region_name);
+            if let Some(w) = unmapped_writer.as_mut() {
+                write_unmapped_region(
+                    w.as_mut(),
+                    chr,
+                    region_start,
+                    region_end,
+                    region_name,
+                    reason,
+                )?;
+            }
+            continue;
+        }
+
+        let query = reader
+            .query(&header, region)
+            .context("CRAM region query failed")?;
+
+        let (lflank, rflank) = effective_flanks(opts);
+        let (overlapping_reads, candidates_seen) =
+            get_cram_reads(&bam_config(opts), query, region, lflank, rflank)?;
+        if overlapping_reads.is_empty() {
+            let reason = if candidates_seen == 0 {
+                "no overlapping reads found".to_string()
+            } else {
+                format!(
+                    "{candidates_seen} candidate read(s) found but all were filtered out (--min_mapq/--include_secondary/--include_supplementary/--partial/--min_partial_coverage/--min_region_quality)"
+                )
+            };
+            eprintln!(
+                "No reads found for region in CRAM file. Skipping region: {}",
+                region_name
+            );
+            if let Some(w) = unmapped_writer.as_mut() {
+                write_unmapped_region(
+                    w.as_mut(),
+                    chr,
+                    region_start,
+                    region_end,
+                    region_name,
+                    &reason,
+                )?;
+            }
+            continue;
+        }
+
         let desired_start = region_start.saturating_sub(lflank);
         let desired_end = region_end + rflank;
+        let matched_count = overlapping_reads.len();
+        let mut written_count = 0usize;
         for (name, subseq, subqual, ref_start, ref_end, hap) in overlapping_reads {
             if opts.dedup && !seen.insert(name.clone()) {
                 continue;
             }
+            written_count += 1;
             let hap_suffix = if hap > 0 {
                 format!("|h{}", hap)
             } else {
@@ -410,6 +530,21 @@ pub fn extract_from_cram(
             } else {
                 write_fasta_record(writer, &head, seq_str)
                     .context("failed to write FASTA record")?;
+            }
+        }
+        if written_count == 0 {
+            let reason = format!(
+                "{matched_count} matching read(s) found but all were already emitted for another region (--dedup)"
+            );
+            if let Some(w) = unmapped_writer.as_mut() {
+                write_unmapped_region(
+                    w.as_mut(),
+                    chr,
+                    region_start,
+                    region_end,
+                    region_name,
+                    &reason,
+                )?;
             }
         }
     }
@@ -491,17 +626,14 @@ pub fn extract_from_paf(
         .build_from_path(query_ref)
         .with_context(|| format!("failed to open query_ref FASTA: {query_ref}"))?;
 
+    let mut unmapped_writer = open_optional_writer(&opts.unmapped)?;
+
     // for each region, get paf regions and extract sequences
     for (region, region_name, chr) in regions.iter() {
         if opts.debug {
             eprintln!("===============================");
             eprintln!("Analysing region: {}, {}", region, region_name);
             eprintln!("===============================");
-        }
-
-        if region.name().contains(&b'#') {
-            eprintln!("Region {} has a #, skipping", region_name);
-            continue;
         }
 
         let region_start =
@@ -513,6 +645,23 @@ pub fn extract_from_paf(
             .end()
             .map(usize::from)
             .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
+
+        if region.name().contains(&b'#') {
+            let reason = "region skipped (chromosome name contains '#')";
+            eprintln!("Region {} has a #, skipping", region_name);
+            if let Some(w) = unmapped_writer.as_mut() {
+                write_unmapped_region(
+                    w.as_mut(),
+                    chr,
+                    region_start,
+                    region_end,
+                    region_name,
+                    reason,
+                )?;
+            }
+            continue;
+        }
+
         let (lflank, rflank) = effective_flanks(opts);
 
         // Query index for overlapping entries
@@ -532,17 +681,38 @@ pub fn extract_from_paf(
             opts.debug,
         )?;
         if reads.is_empty() {
+            let reason = if overlapping_entries.is_empty() {
+                "no overlapping alignments found".to_string()
+            } else {
+                format!(
+                    "{} overlapping alignment(s) found but none produced output (missing CIGAR, no valid overlap, or invalid coordinates)",
+                    overlapping_entries.len()
+                )
+            };
             eprintln!(
                 "No overlapping alignments produced output for region in PAF file. Skipping region: {}",
                 region_name
             );
+            if let Some(w) = unmapped_writer.as_mut() {
+                write_unmapped_region(
+                    w.as_mut(),
+                    chr,
+                    region_start,
+                    region_end,
+                    region_name,
+                    &reason,
+                )?;
+            }
             continue;
         }
 
+        let matched_count = reads.len();
+        let mut written_count = 0usize;
         for (sequence, query_name, query_start, query_end, strand, hap) in reads {
             if opts.dedup && !seen.insert(query_name.clone()) {
                 continue;
             }
+            written_count += 1;
             if let Some(bed_writer) = bed_out_writer.as_mut() {
                 writeln!(
                     bed_writer,
@@ -585,6 +755,21 @@ pub fn extract_from_paf(
             };
             write_fasta_record(writer, &header, &sequence)
                 .context("failed to write FASTA record")?;
+        }
+        if written_count == 0 {
+            let reason = format!(
+                "{matched_count} matching alignment(s) found but all were already emitted for another region (--dedup)"
+            );
+            if let Some(w) = unmapped_writer.as_mut() {
+                write_unmapped_region(
+                    w.as_mut(),
+                    chr,
+                    region_start,
+                    region_end,
+                    region_name,
+                    &reason,
+                )?;
+            }
         }
     }
     Ok(())

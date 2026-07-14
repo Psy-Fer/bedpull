@@ -25,6 +25,7 @@ At least one input mode must be specified: `--bam`, `--cram`, or `--paf` + `--qu
 |------|-------|---------|------|-------------|
 | `--output <FILE>` | `-o` | `-` (stdout) | all | Output FASTA or FASTQ file. Pass `-` to write to stdout. |
 | `--bed_out <FILE>` | — | — | PAF | Write lifted-over query coordinates as BED6 alongside the FASTA output. Pass `-` for stdout (but not simultaneously with `--output -`). |
+| `--unmapped <FILE>` | — | — | all | Write input BED regions that produced no output here, each preceded by a `#reason` comment (similar to liftOver's `-unmapped`). Pass `-` for stdout (but not simultaneously with `--output -` or `--bed_out -`). See [Unmapped regions](#unmapped-regions). |
 | `--fastq` | — | false | BAM, CRAM | Write FASTQ instead of FASTA. Quality scores are Phred+33 encoded. |
 
 ## Filtering flags
@@ -92,6 +93,37 @@ With `--hap_split` and a non-zero `hp:i:` tag:
 ```
 
 `region_name` / `bed_name` comes from the 4th column of the BED file, or `chr:start-end` if the column is absent.
+
+## Unmapped regions
+
+Pass `--unmapped <file>` to get a report of every input BED region that produced zero final
+output rows, across all three modes. The format mirrors liftOver's own unmapped file: a
+`#reason` comment line followed by the input BED record (`chrom`, `start`, `end`, `name`):
+
+```
+#no overlapping reads found
+chr4	1000	2000	NOMATCH
+#44 candidate read(s) found but all were filtered out (--min_mapq/--include_secondary/--include_supplementary/--partial/--min_partial_coverage/--min_region_quality)
+chr4	39318077	39318136	RFC1
+#40 matching read(s) found but all were already emitted for another region (--dedup)
+chr4	39318077	39318136	RFC1_b
+#region skipped (chromosome name contains '#')
+chr4	1000	2000	COMMENTED
+```
+
+Reasons distinguish four cases:
+- **No overlapping reads/alignments at all** — nothing in the BAM/CRAM/PAF overlapped the region.
+- **Candidates existed but all were filtered out** — one or more of `--min_mapq`,
+  `--include_secondary`/`--include_supplementary`, `--partial`/`--min_partial_coverage`, or
+  `--min_region_quality` excluded every candidate. The exact count of raw candidates is
+  included, but not which specific filter caused each exclusion.
+- **All matches already emitted for another region** — only possible with `--dedup`; the reads
+  or alignments existed and passed every filter, but were all skipped because they'd already
+  been written out for an earlier region.
+- **Region explicitly skipped** — the region's chromosome name contains `#`.
+
+Without `--unmapped`, bedpull still prints an equivalent one-line notice to stderr for each
+empty region, but doesn't distinguish these cases or write a structured file.
 
 ## Exit codes
 

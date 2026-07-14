@@ -168,6 +168,13 @@ fn passes_min_partial_coverage(
 /// (expanded by `lflank` / `rflank` bp on each side), and returns one [`BamRead`]
 /// per passing read.
 ///
+/// Returns `(reads, candidates_seen)`, where `candidates_seen` is the number of BAM
+/// records the query yielded before any filter was applied — a region with
+/// `candidates_seen == 0` had no overlapping alignments at all, whereas
+/// `candidates_seen > 0 && reads.is_empty()` means every candidate was excluded by
+/// `config` (mapq, flags, spanning/partial coverage, or region quality). Useful for
+/// distinguishing "nothing here" from "filtered out" when reporting unmapped regions.
+///
 /// # Parameters
 ///
 /// - `config` — filter and extraction settings; see [`BamConfig`].
@@ -193,14 +200,16 @@ pub fn get_bam_reads<R>(
     region: &Region,
     lflank: usize,
     rflank: usize,
-) -> Result<Vec<BamRead>>
+) -> Result<(Vec<BamRead>, usize)>
 where
     R: noodles::bgzf::io::BufRead + noodles::bgzf::io::Seek,
 {
     let mut results: Vec<BamRead> = Vec::new();
+    let mut candidates_seen: usize = 0;
 
     for result in query.records() {
         let record = result.context("failed to read BAM record")?;
+        candidates_seen += 1;
 
         let map_quality = record.mapping_quality().map(u8::from).unwrap_or(255);
         if map_quality < config.min_mapq {
@@ -305,24 +314,26 @@ where
         results.push((name, subseq, subqual, ref_start, ref_end, hap));
     }
 
-    Ok(results)
+    Ok((results, candidates_seen))
 }
 
 /// Extract subsequences from all CRAM records that overlap a given region.
 ///
 /// Works identically to [`get_bam_reads`] but consumes any iterator that yields
 /// `io::Result<sam::alignment::RecordBuf>` — the item type produced by
-/// `cram::io::IndexedReader::query`.
+/// `cram::io::IndexedReader::query`. Returns `(reads, candidates_seen)`; see
+/// [`get_bam_reads`] for what `candidates_seen` means.
 pub fn get_cram_reads(
     config: &BamConfig,
     query: impl Iterator<Item = std::io::Result<noodles::sam::alignment::RecordBuf>>,
     region: &Region,
     lflank: usize,
     rflank: usize,
-) -> Result<Vec<BamRead>> {
+) -> Result<(Vec<BamRead>, usize)> {
     use noodles::sam::alignment::record_buf::data::field::Value as RecordBufValue;
 
     let mut results: Vec<BamRead> = Vec::new();
+    let mut candidates_seen: usize = 0;
 
     let region_start = region
         .interval()
@@ -337,6 +348,7 @@ pub fn get_cram_reads(
 
     for result in query {
         let record = result.context("failed to read CRAM record")?;
+        candidates_seen += 1;
 
         let map_quality = record.mapping_quality().map(u8::from).unwrap_or(255);
         if map_quality < config.min_mapq {
@@ -433,7 +445,7 @@ pub fn get_cram_reads(
 
         results.push((name, subseq, subqual, ref_start, ref_end, hap));
     }
-    Ok(results)
+    Ok((results, candidates_seen))
 }
 
 /// Extract subsequences from PAF alignment records that overlap a given region.

@@ -83,6 +83,11 @@ pub struct Opts {
     #[clap(long = "bed_out", default_value = "None", display_order = 5)]
     pub bed_out: PathBuf,
 
+    /// Write input BED regions that produced no output to this file, each preceded by a
+    /// '#reason' comment (all modes). Use '-' to write to stdout.
+    #[clap(long = "unmapped", default_value = "None", display_order = 5)]
+    pub unmapped: PathBuf,
+
     /// Use paf index
     #[clap(long = "use_paf_index", default_value = "true", display_order = 8)]
     pub use_paf_index: bool,
@@ -410,6 +415,35 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
         check_dir_writable(parent)?;
     }
 
+    let has_unmapped = opts.unmapped.to_str() != Some("None");
+    if has_unmapped && is_stdout(&opts.unmapped) && is_stdout(&opts.output) {
+        bail!(
+            "--unmapped and --output cannot both be stdout ('-'); use a file path for one of them"
+        );
+    }
+    if has_unmapped && has_bed_out && is_stdout(&opts.unmapped) && is_stdout(&opts.bed_out) {
+        bail!(
+            "--unmapped and --bed_out cannot both be stdout ('-'); use a file path for one of them"
+        );
+    }
+    if has_unmapped && !is_stdout(&opts.unmapped) {
+        let parent = opts.unmapped.parent().unwrap_or(Path::new("."));
+        let parent = if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        };
+        if !parent.exists() {
+            bail!(
+                "unmapped directory does not exist: {}\n\
+                 Create it with:\n  mkdir -p {}",
+                parent.display(),
+                parent.display()
+            );
+        }
+        check_dir_writable(parent)?;
+    }
+
     // Output parent directory must exist
     if !is_stdout(&opts.output) {
         let parent = opts.output.parent().unwrap_or(Path::new("."));
@@ -458,6 +492,7 @@ mod tests {
             query_ref: PathBuf::from("None"),
             output: PathBuf::from("out.fasta"),
             bed_out: PathBuf::from("None"),
+            unmapped: PathBuf::from("None"),
             use_paf_index: true,
             fastq,
             min_mapq: 0,
@@ -826,6 +861,54 @@ mod tests {
         o.output = PathBuf::from("out.fasta");
         o.bed_out = PathBuf::from("-");
         assert!(check_option_values(&o).is_ok());
+    }
+
+    // --- --unmapped validation ---
+
+    #[test]
+    fn unmapped_valid_in_bam_mode() {
+        let mut o = make_opts(false, "reads.bam");
+        o.unmapped = PathBuf::from("unmapped.bed");
+        assert!(check_option_values(&o).is_ok());
+    }
+
+    #[test]
+    fn unmapped_valid_in_paf_mode() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.unmapped = PathBuf::from("unmapped.bed");
+        assert!(check_option_values(&o).is_ok());
+    }
+
+    #[test]
+    fn unmapped_and_output_both_stdout_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.output = PathBuf::from("-");
+        o.unmapped = PathBuf::from("-");
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn unmapped_and_bed_out_both_stdout_is_error() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.output = PathBuf::from("out.fasta");
+        o.bed_out = PathBuf::from("-");
+        o.unmapped = PathBuf::from("-");
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn unmapped_stdout_with_output_file_is_ok() {
+        let mut o = make_opts(false, "reads.bam");
+        o.output = PathBuf::from("out.fasta");
+        o.unmapped = PathBuf::from("-");
+        assert!(check_option_values(&o).is_ok());
+    }
+
+    #[test]
+    fn unmapped_missing_parent_dir_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.unmapped = PathBuf::from("/nonexistent_dir_bedpull_test/unmapped.bed");
+        assert!(check_option_values(&o).is_err());
     }
 
     #[test]

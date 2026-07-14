@@ -75,6 +75,7 @@ Options:
   -o, --output <FILE>           Output file (fasta/fastq)
       --fastq                   Output FASTQ format (BAM only)
       --mapq <INT>              Minimum mapping quality [default: 0]
+      --unmapped <FILE>         Write input regions that produced no output here, with reasons
       --debug                   Print verbose per-region/per-read diagnostic output
   -h, --help                    Print help
   -V, --version                 Print version
@@ -184,6 +185,7 @@ Traditional coordinate conversion tools (like liftOver) fail when:
 
 bedpull solves this by:
 - parsing CIGAR operations of full alignments to get exact coordinates
+- reporting which input regions produced no output and why, via `--unmapped <file>` — similar to liftOver's own `-unmapped` file, but across BAM/CRAM/PAF modes
 
 ## Input Formats
 
