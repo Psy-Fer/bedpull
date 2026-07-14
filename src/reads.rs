@@ -389,6 +389,7 @@ pub fn get_cram_reads(
 ///
 /// Records without a `cg:Z:` CIGAR tag or with invalid cut coordinates are skipped
 /// with a diagnostic message to stderr.
+#[allow(clippy::too_many_arguments)]
 pub fn get_paf_reads(
     paf_path: &str,
     query_ref: &str,
@@ -397,6 +398,7 @@ pub fn get_paf_reads(
     region_end: usize,
     lflank: usize,
     rflank: usize,
+    debug: bool,
 ) -> Result<Vec<PafRead>> {
     let mut results: Vec<PafRead> = Vec::new();
 
@@ -457,10 +459,12 @@ pub fn get_paf_reads(
             )
         };
 
-        eprintln!(
-            "Query coords: {}:{}-{} (strand {})",
-            paf_record.query_name, query_start, query_end, paf_record.strand
-        );
+        if debug {
+            eprintln!(
+                "Query coords: {}:{}-{} (strand {})",
+                paf_record.query_name, query_start, query_end, paf_record.strand
+            );
+        }
 
         let sequence =
             extract_from_fasta_coords(query_ref, &paf_record.query_name, query_start, query_end)

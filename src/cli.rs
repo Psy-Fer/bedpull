@@ -129,6 +129,10 @@ pub struct Opts {
     /// Right-side reference flank in bp (overrides --flanks for the right side)
     #[clap(long = "rflank", default_value = "0", display_order = 9)]
     pub rflank: usize,
+
+    /// Print verbose per-region/per-read diagnostic output (parsed args, BED records, region banners, query coordinates)
+    #[clap(long = "debug", display_order = 13)]
+    pub debug: bool,
 }
 
 fn check_if_file_exists(filename: &PathBuf) -> Result<()> {
@@ -385,6 +389,7 @@ mod tests {
             min_region_quality: 0.0,
             hap_split: false,
             dedup: false,
+            debug: false,
         }
     }
 

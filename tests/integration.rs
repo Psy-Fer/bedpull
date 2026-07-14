@@ -81,7 +81,7 @@ fn temp_bed(contents: &str) -> tempfile::NamedTempFile {
 #[test]
 fn read_bed_returns_correct_regions() {
     let f = temp_bed("chr1\t100\t200\nchr4\t39318077\t39318136\tRFC1\n");
-    let regions = read_bed(f.path()).unwrap();
+    let regions = read_bed(f.path(), false).unwrap();
     assert_eq!(regions.len(), 2);
     assert_eq!(regions[1].1, "RFC1");
     assert_eq!(regions[1].2, "chr4");

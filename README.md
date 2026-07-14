@@ -75,6 +75,7 @@ Options:
   -o, --output <FILE>           Output file (fasta/fastq)
       --fastq                   Output FASTQ format (BAM only)
       --mapq <INT>              Minimum mapping quality [default: 0]
+      --debug                   Print verbose per-region/per-read diagnostic output
   -h, --help                    Print help
   -V, --version                 Print version
 ```

@@ -113,12 +113,16 @@ fn open_writer(path: &Path) -> Result<BufWriter<File>> {
 
 fn main() -> Result<()> {
     let opts: Opts = Opts::parse();
-    eprintln!("{:#?}", opts);
+    if opts.debug {
+        eprintln!("{:#?}", opts);
+    }
     crate::cli::check_option_values(&opts)?;
     crate::cli::check_inputs_exist(&opts)?;
 
-    eprintln!("Reading bed file");
-    let regions = read_bed(&opts.bed)?;
+    if opts.debug {
+        eprintln!("Reading bed file");
+    }
+    let regions = read_bed(&opts.bed, opts.debug)?;
 
     let mut read_writer: Box<dyn std::io::Write> = if cli::is_stdout(&opts.output) {
         Box::new(BufWriter::new(std::io::stdout()))
@@ -168,9 +172,11 @@ pub fn extract_from_bam(
     }
 
     for (region, region_name, chr) in regions.iter() {
-        eprintln!("===============================");
-        eprintln!("Analysing region: {}, {}", region, region_name);
-        eprintln!("===============================");
+        if opts.debug {
+            eprintln!("===============================");
+            eprintln!("Analysing region: {}, {}", region, region_name);
+            eprintln!("===============================");
+        }
 
         if region.name().contains(&b'#') {
             eprintln!("Region {} has a #, skipping", region_name);
@@ -295,9 +301,11 @@ pub fn extract_from_cram(
     };
 
     for (region, region_name, chr) in regions.iter() {
-        eprintln!("===============================");
-        eprintln!("Analysing region: {}, {}", region, region_name);
-        eprintln!("===============================");
+        if opts.debug {
+            eprintln!("===============================");
+            eprintln!("Analysing region: {}, {}", region, region_name);
+            eprintln!("===============================");
+        }
 
         if region.name().contains(&b'#') {
             eprintln!("Region {} has a #, skipping", region_name);
@@ -439,9 +447,11 @@ pub fn extract_from_paf(
 
     // for each region, get paf regions and extract sequences
     for (region, region_name, chr) in regions.iter() {
-        eprintln!("===============================");
-        eprintln!("Analysing region: {}, {}", region, region_name);
-        eprintln!("===============================");
+        if opts.debug {
+            eprintln!("===============================");
+            eprintln!("Analysing region: {}, {}", region, region_name);
+            eprintln!("===============================");
+        }
 
         if region.name().contains(&b'#') {
             eprintln!("Region {} has a #, skipping", region_name);
@@ -461,7 +471,9 @@ pub fn extract_from_paf(
 
         // Query index for overlapping entries
         let overlapping_entries = index.query(chr, region_start, region_end);
-        eprintln!("Found {} overlapping alignments", overlapping_entries.len());
+        if opts.debug {
+            eprintln!("Found {} overlapping alignments", overlapping_entries.len());
+        }
 
         let reads = get_paf_reads(
             paf_path,
@@ -471,6 +483,7 @@ pub fn extract_from_paf(
             region_end,
             lflank,
             rflank,
+            opts.debug,
         )?;
 
         for (sequence, query_name, query_start, query_end, strand, hap) in reads {

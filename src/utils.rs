@@ -200,19 +200,23 @@ pub fn get_read_cuts(
 /// 4th column; if absent it defaults to `"chrom:start-end"`. The `chromosome`
 /// string is the raw first column, kept separately so callers can use it as a
 /// plain string key (e.g. for PAF index lookups) without parsing the `Region`.
-pub fn read_bed(path: &Path) -> Result<Vec<(Region, String, String)>> {
+pub fn read_bed(path: &Path, debug: bool) -> Result<Vec<(Region, String, String)>> {
     let mut regions: Vec<(Region, String, String)> = vec![];
     let reader = BedReader::from_path(path).context("failed to open BED file")?;
     for record in reader {
         match record {
             Ok(record) => {
-                eprintln!("{:?}", record);
+                if debug {
+                    eprintln!("{:?}", record);
+                }
                 let chr: String = record.chrom.clone();
                 let start =
                     Position::try_from(record.start).context("invalid BED start coordinate")?;
                 let end = Position::try_from(record.end).context("invalid BED end coordinate")?;
                 let interval: Interval = Interval::from(start..=end);
-                eprintln!("region: {:?}", Region::new(record.chrom.clone(), interval));
+                if debug {
+                    eprintln!("region: {:?}", Region::new(record.chrom.clone(), interval));
+                }
                 let name = record
                     .name
                     .unwrap_or_else(|| format!("{}:{}-{}", record.chrom, start, end));
@@ -372,7 +376,7 @@ mod tests {
     #[test]
     fn read_bed_three_column() {
         let f = temp_bed("chr1\t100\t200\n");
-        let regions = read_bed(f.path()).unwrap();
+        let regions = read_bed(f.path(), false).unwrap();
         assert_eq!(regions.len(), 1);
         let (_, name, chr) = &regions[0];
         assert_eq!(chr, "chr1");
@@ -383,7 +387,7 @@ mod tests {
     #[test]
     fn read_bed_four_column_name() {
         let f = temp_bed("chr4\t39318077\t39318136\tRFC1\n");
-        let regions = read_bed(f.path()).unwrap();
+        let regions = read_bed(f.path(), false).unwrap();
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].1, "RFC1");
         assert_eq!(regions[0].2, "chr4");
@@ -392,7 +396,7 @@ mod tests {
     #[test]
     fn read_bed_multiple_regions() {
         let f = temp_bed("chr1\t100\t200\nchr2\t300\t400\tFOO\n");
-        let regions = read_bed(f.path()).unwrap();
+        let regions = read_bed(f.path(), false).unwrap();
         assert_eq!(regions.len(), 2);
         assert_eq!(regions[1].1, "FOO");
     }
