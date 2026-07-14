@@ -45,8 +45,8 @@ You can then copy that binary across and use it.
 
 ### Requirements
 - Rust 1.70 or higher
-- For BAM extraction: indexed BAM file (.bai)
-- For PAF extraction: indexed FASTA file (.fai)
+- BAM/CRAM files must be coordinate-sorted (bedpull auto-builds a missing `.bai`/`.crai` index)
+- FASTA files used with `--reference`/`--query_ref` get a missing `.fai` index auto-built too
 
 ## Usage
 
@@ -201,11 +201,12 @@ chr4    39318077    39318136    RFC1
 ```
 
 ### BAM file
-Must be coordinate-sorted and indexed (.bai file in same directory)
+Must be coordinate-sorted. If the `.bai` index is missing, bedpull builds it
+automatically the first time you run it against that file:
 
 ```
 samtools view -bS example.sam | samtools sort -o example.bam
-samtools index example.bam
+bedpull --bam example.bam --bed regions.bed --output out.fasta
 ```
 
 ### PAF file
@@ -218,10 +219,8 @@ minimap2 -cx asm5 --cs=long -t 16 reference.fasta query.fasta > alignment.paf
 ```
 
 ### FASTA file
-Must be indexed (.fai file). Create index with:
-```bash
-samtools faidx assembly.fasta
-```
+If the `.fai` index is missing, bedpull builds it automatically the first time
+you run it against that file (equivalent to `samtools faidx assembly.fasta`).
 
 ## Output
 

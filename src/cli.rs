@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, crate_version};
+use noodles::{bam, cram, fasta};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
@@ -174,38 +175,108 @@ fn cram_index_path(cram: &Path) -> Option<PathBuf> {
     if crai.exists() { Some(crai) } else { None }
 }
 
+/// Build and write a `<bam>.bai` index (the `samtools index` default convention).
+fn build_bam_index(path: &Path) -> Result<()> {
+    eprintln!(
+        "BAM index not found for '{}' — building it (this may take a moment for large files)...",
+        path.display()
+    );
+    let index = bam::fs::index(path).with_context(|| {
+        format!(
+            "failed to auto-build BAM index for '{}'\n\
+             You can build it manually with:\n  samtools index {}",
+            path.display(),
+            path.display()
+        )
+    })?;
+    let dst = path.with_extension("bam.bai");
+    bam::bai::fs::write(&dst, &index).with_context(|| {
+        format!(
+            "failed to write BAM index to '{}'\n\
+             You can build it manually with:\n  samtools index {}",
+            dst.display(),
+            path.display()
+        )
+    })?;
+    eprintln!("BAM index written to {}", dst.display());
+    Ok(())
+}
+
+/// Build and write a `<cram>.crai` index (the `samtools index` default convention).
+fn build_cram_index(path: &Path) -> Result<()> {
+    eprintln!(
+        "CRAM index not found for '{}' — building it (this may take a moment for large files)...",
+        path.display()
+    );
+    let index = cram::fs::index(path).with_context(|| {
+        format!(
+            "failed to auto-build CRAM index for '{}'\n\
+             You can build it manually with:\n  samtools index {}",
+            path.display(),
+            path.display()
+        )
+    })?;
+    let mut dst = path.as_os_str().to_owned();
+    dst.push(".crai");
+    let dst = PathBuf::from(dst);
+    cram::crai::fs::write(&dst, &index).with_context(|| {
+        format!(
+            "failed to write CRAM index to '{}'\n\
+             You can build it manually with:\n  samtools index {}",
+            dst.display(),
+            path.display()
+        )
+    })?;
+    eprintln!("CRAM index written to {}", dst.display());
+    Ok(())
+}
+
+/// Build and write a `<fasta>.fai` index (the `samtools faidx` convention).
+fn build_fasta_index(path: &Path) -> Result<()> {
+    eprintln!(
+        "FASTA index not found for '{}' — building it (this may take a moment for large files)...",
+        path.display()
+    );
+    let index = fasta::fs::index(path).with_context(|| {
+        format!(
+            "failed to auto-build FASTA index for '{}'\n\
+             You can build it manually with:\n  samtools faidx {}",
+            path.display(),
+            path.display()
+        )
+    })?;
+    let mut dst = path.as_os_str().to_owned();
+    dst.push(".fai");
+    let dst = PathBuf::from(dst);
+    fasta::fai::fs::write(&dst, &index).with_context(|| {
+        format!(
+            "failed to write FASTA index to '{}'\n\
+             You can build it manually with:\n  samtools faidx {}",
+            dst.display(),
+            path.display()
+        )
+    })?;
+    eprintln!("FASTA index written to {}", dst.display());
+    Ok(())
+}
+
 pub fn check_inputs_exist(opts: &Opts) -> Result<()> {
     if opts.bam.to_str() != Some("None") {
         check_if_file_exists(&opts.bam)?;
         if bam_index_path(&opts.bam).is_none() {
-            bail!(
-                "BAM index not found for '{}'\n\
-                 Create it with:\n  samtools index {}",
-                opts.bam.display(),
-                opts.bam.display()
-            );
+            build_bam_index(&opts.bam)?;
         }
     }
     if opts.cram.to_str() != Some("None") {
         check_if_file_exists(&opts.cram)?;
         if cram_index_path(&opts.cram).is_none() {
-            bail!(
-                "CRAM index not found for '{}'\n\
-                 Create it with:\n  samtools index {}",
-                opts.cram.display(),
-                opts.cram.display()
-            );
+            build_cram_index(&opts.cram)?;
         }
     }
     if opts.reference.to_str() != Some("None") {
         check_if_file_exists(&opts.reference)?;
         if fasta_index_path(&opts.reference).is_none() {
-            bail!(
-                "FASTA index not found for '{}'\n\
-                 Create it with:\n  samtools faidx {}",
-                opts.reference.display(),
-                opts.reference.display()
-            );
+            build_fasta_index(&opts.reference)?;
         }
     }
     if opts.paf.to_str() != Some("None") {
@@ -214,12 +285,7 @@ pub fn check_inputs_exist(opts: &Opts) -> Result<()> {
     if opts.query_ref.to_str() != Some("None") {
         check_if_file_exists(&opts.query_ref)?;
         if fasta_index_path(&opts.query_ref).is_none() {
-            bail!(
-                "FASTA index not found for '{}'\n\
-                 Create it with:\n  samtools faidx {}",
-                opts.query_ref.display(),
-                opts.query_ref.display()
-            );
+            build_fasta_index(&opts.query_ref)?;
         }
     }
     if opts.bed.to_str() != Some("None") {
@@ -572,7 +638,23 @@ mod tests {
     }
 
     #[test]
-    fn missing_bam_index_error_contains_samtools_command() {
+    fn missing_bam_index_is_auto_built() {
+        let dir = tempfile::tempdir().unwrap();
+        let bam = dir.path().join("reads.bam");
+        std::fs::copy("examples/rfc1_test.bam", &bam).unwrap();
+        let bed = dir.path().join("test.bed");
+        std::fs::write(&bed, b"chr4\t39318077\t39318136\tRFC1\n").unwrap();
+        let mut opts = make_opts(false, "None");
+        opts.bam = bam.clone();
+        opts.bed = bed;
+
+        assert!(bam_index_path(&bam).is_none());
+        check_inputs_exist(&opts).unwrap();
+        assert!(bam_index_path(&bam).is_some());
+    }
+
+    #[test]
+    fn invalid_bam_index_build_error_contains_samtools_command() {
         let dir = tempfile::tempdir().unwrap();
         let bam = dir.path().join("reads.bam");
         std::fs::write(&bam, b"").unwrap();
@@ -591,10 +673,26 @@ mod tests {
     }
 
     #[test]
-    fn missing_query_ref_index_error_contains_samtools_command() {
+    fn missing_query_ref_index_is_auto_built() {
         let dir = tempfile::tempdir().unwrap();
         let fa = dir.path().join("assembly.fa");
-        std::fs::write(&fa, b"").unwrap();
+        std::fs::write(&fa, b">chr1\nACGTACGTACGT\n").unwrap();
+        let bed = dir.path().join("test.bed");
+        std::fs::write(&bed, b"chr1\t0\t4\n").unwrap();
+        let mut opts = make_opts(false, "None");
+        opts.query_ref = fa.clone();
+        opts.bed = bed;
+
+        assert!(fasta_index_path(&fa).is_none());
+        check_inputs_exist(&opts).unwrap();
+        assert!(fasta_index_path(&fa).is_some());
+    }
+
+    #[test]
+    fn invalid_fasta_index_build_error_contains_samtools_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let fa = dir.path().join("assembly.fa");
+        std::fs::write(&fa, b"not a fasta file\n").unwrap();
         let mut opts = make_opts(false, "None");
         opts.query_ref = fa.clone();
         let err = check_inputs_exist(&opts).unwrap_err();
@@ -606,6 +704,41 @@ mod tests {
         assert!(
             msg.contains("assembly.fa"),
             "error should mention the FASTA path: {msg}"
+        );
+    }
+
+    #[test]
+    fn missing_cram_index_is_auto_built() {
+        let dir = tempfile::tempdir().unwrap();
+        let cram = dir.path().join("reads.cram");
+        std::fs::copy("examples/rfc1_test.cram", &cram).unwrap();
+        let bed = dir.path().join("test.bed");
+        std::fs::write(&bed, b"chr4\t39318077\t39318136\tRFC1\n").unwrap();
+        let mut opts = make_opts(false, "None");
+        opts.cram = cram.clone();
+        opts.bed = bed;
+
+        assert!(cram_index_path(&cram).is_none());
+        check_inputs_exist(&opts).unwrap();
+        assert!(cram_index_path(&cram).is_some());
+    }
+
+    #[test]
+    fn invalid_cram_index_build_error_contains_samtools_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let cram = dir.path().join("reads.cram");
+        std::fs::write(&cram, b"").unwrap();
+        let mut opts = make_opts(false, "None");
+        opts.cram = cram.clone();
+        let err = check_inputs_exist(&opts).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("samtools index"),
+            "error should suggest samtools index: {msg}"
+        );
+        assert!(
+            msg.contains("reads.cram"),
+            "error should mention the CRAM path: {msg}"
         );
     }
 
