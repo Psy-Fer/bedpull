@@ -6,7 +6,7 @@ bedpull is published as a Rust library crate as well as a binary. You can use it
 
 ```toml
 [dependencies]
-bedpull = "0.1"
+bedpull = "0.2"
 ```
 
 ## Import paths
@@ -18,15 +18,20 @@ use bedpull::{
     // CIGAR types
     CigarOp, CigarOps, ToCigarOps,
     // PAF index and record access
-    PafIndex, PafIndexEntry, PafRecord, read_paf_record_at_offset,
-    // BAM extraction
-    BamConfig, BamRead, get_bam_reads,
+    PafIndex, PafIndexEntry, PafRecord, read_paf_record_at_offset, read_paf_record_from_reader,
+    // BAM/CRAM extraction
+    BamConfig, BamRead, PafRead, get_bam_reads, get_cram_reads, get_paf_reads,
     // Core utilities
     ReadCuts, get_read_cuts, calculate_qscore,
     read_bed, write_fasta_record, write_fastq_record,
-    extract_from_fasta_coords,
+    extract_from_fasta_coords, extract_from_fasta_coords_reader,
 };
 ```
+
+`read_paf_record_at_offset` and `extract_from_fasta_coords` each open their file fresh on
+every call — fine for a one-off lookup. `read_paf_record_from_reader` and
+`extract_from_fasta_coords_reader` take an already-open reader instead, so you can open the
+PAF/FASTA once and reuse it across many records; see [Example 3](#example-3-paf-based-extraction).
 
 ## Example 1: BAM extraction with BamConfig
 
@@ -125,10 +130,18 @@ reference covered: [3-7]
 
 ## Example 3: PAF-based extraction
 
+`get_paf_reads` is the high-level entry point — it drives the CIGAR walk, the FASTA extraction,
+and the minus-strand reverse-complement for you. It takes an already-open PAF reader and an
+already-open indexed FASTA reader so you can call it once per region (or even across many
+regions) without reopening either file each time — reopening per record is the single biggest
+cost in PAF-mode extraction once you're processing more than a handful of alignments.
+
 ```rust
 use anyhow::Result;
-use bedpull::{PafIndex, read_paf_record_at_offset, ToCigarOps, get_read_cuts, extract_from_fasta_coords, write_fasta_record};
-use std::io;
+use bedpull::{PafIndex, get_paf_reads, write_fasta_record};
+use noodles::fasta;
+use std::fs::File;
+use std::io::{self, BufReader};
 
 fn extract_from_paf(
     paf_path: &str,
@@ -147,37 +160,40 @@ fn extract_from_paf(
         idx
     };
 
+    // Open both files once; reuse them across every region you process.
+    let mut paf_reader = BufReader::new(File::open(paf_path)?);
+    let mut fasta_reader = fasta::io::indexed_reader::Builder::default()
+        .build_from_path(query_fasta)?;
+
     let entries = index.query(chrom, region_start, region_end);
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    for entry in entries {
-        let record = read_paf_record_at_offset(paf_path, entry.offset)?;
-        if let Some(cigar_str) = &record.cigar {
-            let ops = cigar_str.as_str().to_cigar_ops()?;
-            let cuts = get_read_cuts(&ops, record.target_start, region_start, region_end);
+    let reads = get_paf_reads(
+        &mut paf_reader,
+        &mut fasta_reader,
+        &entries,
+        region_start,
+        region_end,
+        0, // lflank
+        0, // rflank
+        false, // debug
+    )?;
 
-            let query_start = record.query_start + cuts.read_start;
-            let query_end = record.query_start + cuts.read_end;
-
-            let sequence = extract_from_fasta_coords(
-                query_fasta,
-                &record.query_name,
-                query_start,
-                query_end,
-            )?;
-
-            let header = format!(
-                "{}|{}:{}-{}",
-                record.query_name, chrom, region_start, region_end
-            );
-            write_fasta_record(&mut out, &header, &sequence)?;
-        }
+    for (sequence, query_name, query_start, query_end, strand, _hap) in reads {
+        let header = format!(
+            "{}|{}:{}-{}|{}:{}-{}|{}",
+            query_name, chrom, region_start, region_end, query_name, query_start, query_end, strand
+        );
+        write_fasta_record(&mut out, &header, &sequence)?;
     }
 
     Ok(())
 }
 ```
+
+To process many regions, open `paf_reader` and `fasta_reader` once outside a loop over regions
+and call `get_paf_reads` once per region — exactly what `bedpull`'s own CLI does internally.
 
 ## Notes on the coordinate convention
 
@@ -187,3 +203,8 @@ fn extract_from_paf(
 - `region_start` and `region_end` are **0-based** (directly from BED).
 
 Do not normalise both to the same base before calling `get_read_cuts`. The test suite in `src/utils.rs` documents the exact expected behaviour for all edge cases.
+
+`extract_from_fasta_coords`/`extract_from_fasta_coords_reader` take `start`/`end` as **0-based
+half-open** — the same convention as everywhere else in the crate — and convert internally to
+noodles' 1-based-inclusive region syntax. Pass `read_cuts`/`get_paf_reads` output straight
+through without adjusting it yourself.

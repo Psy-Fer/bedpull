@@ -5,7 +5,10 @@ PAF mode extracts sequences from a query FASTA using coordinates derived from a 
 ## Requirements
 
 - A PAF file with the `cg:Z:` CIGAR tag. Produce this with `minimap2 -c` or `minimap2 --cs=long`.
-- The query FASTA (the assembly) indexed with `samtools faidx`.
+- The query FASTA (the assembly). If its `.fai` index is missing, bedpull builds it
+  automatically the first time you run against that file — no `samtools` required.
+
+`--partial` (see [BAM mode](./bam-mode.md#partial-overlaps)) is BAM/CRAM-only and errors if combined with `--paf`; PAF mode always extracts whatever portion of the region an overlapping alignment covers (see [Alignment coverage warnings](#alignment-coverage-warnings) below).
 
 ## Basic usage
 
@@ -148,6 +151,17 @@ If an overlapping alignment does not fully span the requested BED region, bedpul
 Warning: Alignment starts after region start, may be incomplete
 Warning: Alignment ends before region end, may be incomplete
 ```
+
+These warnings are always printed. A per-alignment `Query coords: contig:start-end (strand X)`
+line is also available but only shown with `--debug` (see below), since it's noisy for PAF
+files with many overlapping alignments.
+
+## Diagnostics
+
+By default bedpull only prints index-build/load status, the mode banner, and a completion
+line. Pass `--debug` to see verbose per-region diagnostics: the parsed CLI args, each BED record
+as it's read, a banner for every region as it's processed, the overlapping-alignment count per
+region, and per-alignment query coordinates.
 
 ## Example: extracting RFC1 from a paternal assembly
 

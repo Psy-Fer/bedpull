@@ -44,7 +44,7 @@ cargo build --release --target x86_64-unknown-linux-musl
 You can then copy that binary across and use it.
 
 ### Requirements
-- Rust 1.70 or higher
+- Rust 1.85 or higher (edition 2024)
 - BAM/CRAM files must be coordinate-sorted (bedpull auto-builds a missing `.bai`/`.crai` index)
 - FASTA files used with `--reference`/`--query_ref` get a missing `.fai` index auto-built too
 
@@ -239,8 +239,8 @@ of the region (or `--flanks` window) fall outside the read's alignment:
 
 **PAF extraction:**
 ```
->query_name|ref_region:start-end|query_region:start-end
->chr4_PATERNAL|ref_RFC1:39318077-39318136|query_chr4_PATERNAL:39438031-39438610
+>query_name|chr:ref_start-ref_end|bed_name|query_name:query_start-query_end|strand
+>chr4_PATERNAL|chr4:39318077-39318136|RFC1|chr4_PATERNAL:39438031-39438610|+
 ```
 
 ## TODO

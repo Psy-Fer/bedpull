@@ -11,7 +11,7 @@ bedpull \
     --output extracted.fasta
 ```
 
-The BAM must have a companion `.bam.bai` index in the same directory. The output is FASTA by default; use `--fastq` to include quality scores.
+The BAM must be coordinate-sorted. If the companion `.bam.bai` index is missing, bedpull builds it automatically the first time you run against that file — no `samtools` required. The output is FASTA by default; use `--fastq` to include quality scores.
 
 Omit `--output` (or pass `-`) to write to stdout:
 
@@ -52,7 +52,9 @@ bedpull --bam reads.bam --bed regions.bed --output out.fasta \
 
 ### Quality of the extracted region
 
-When using FASTQ output you can filter on the mean Phred score of the extracted slice:
+Filter on the mean Phred score of the extracted slice. This reads the quality scores from the
+BAM record itself, so it applies whether or not you're also using `--fastq` for output — it's
+not a FASTQ-only feature, just most visibly useful when you're keeping the quality string:
 
 ```bash
 bedpull --bam reads.bam --bed regions.bed --output out.fastq \
@@ -71,7 +73,7 @@ bedpull --bam reads.bam --bed regions.bed --output out.fasta \
     --partial
 ```
 
-Partial reads are clipped to whatever portion of the region they cover. Reads that start after `region_start` are extracted from read position 0; reads that end before `region_end` are extracted to the end of the read.
+Partial reads are clipped to whatever portion of the region they cover. Reads that start after `region_start` are extracted from read position 0; reads that end before `region_end` are extracted to the end of the read. When a read doesn't fully cover the requested (region ± `--flanks`) window, its header gets a `|missing_left=Nbp` and/or `|missing_right=Nbp` suffix recording how many bases were missed on each side — see [Output header format](#output-header-format).
 
 ## Flanks
 
@@ -130,6 +132,18 @@ When `--hap_split` is active and the read carries an HP tag, a haplotype suffix 
 ```
 
 `region_name` comes from the 4th column of the BED file, or defaults to `chr:start-end` if absent.
+
+With `--partial`, a read that doesn't fully span the requested window gets an extra suffix:
+
+```
+>read_name|chr:region_start-region_end|region_name|missing_left=12bp|missing_right=8bp
+```
+
+## Diagnostics
+
+By default bedpull only prints the mode banner and a completion line. Pass `--debug` to see
+verbose per-region diagnostics: the parsed CLI args, each BED record as it's read, and a banner
+for every region as it's processed.
 
 ## Example: RFC1 VNTR from a long-read BAM
 
