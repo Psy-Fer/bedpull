@@ -239,7 +239,6 @@ samtools faidx assembly.fasta
 ## TODO
 
 - add threading for very large bams/pafs
-- add more checks for files, write permissions, arg combination limits (like --fastq only with --bam), etc
 
 
 ## Citation

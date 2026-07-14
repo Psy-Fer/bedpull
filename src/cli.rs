@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, crate_version};
 use std::path::{Path, PathBuf};
 
@@ -90,19 +90,19 @@ pub struct Opts {
     #[clap(long = "fastq", display_order = 8)]
     pub fastq: bool,
 
-    /// Minimum mapping quality (MAPQ) to include a read (BAM only; 0 = no filter)
+    /// Minimum mapping quality (MAPQ) to include a read (BAM/CRAM only; 0 = no filter)
     #[clap(long = "min_mapq", default_value = "0", display_order = 8)]
     pub min_mapq: u8,
 
-    /// Include secondary alignments (BAM only; default: skip)
+    /// Include secondary alignments (BAM/CRAM only; default: skip)
     #[clap(long = "include_secondary", display_order = 8)]
     pub include_secondary: bool,
 
-    /// Include supplementary alignments (BAM only; default: skip)
+    /// Include supplementary alignments (BAM/CRAM only; default: skip)
     #[clap(long = "include_supplementary", display_order = 8)]
     pub include_supplementary: bool,
 
-    /// Include reads that only partially overlap a BED region (default: spanning reads only)
+    /// Include reads that only partially overlap a BED region (BAM/CRAM only; default: spanning reads only)
     #[clap(long = "partial", display_order = 9)]
     pub partial: bool,
 
@@ -236,6 +236,17 @@ pub fn is_stdout(output: &std::path::Path) -> bool {
     output.to_str() == Some("-")
 }
 
+/// Verify `dir` is writable by actually creating and removing a probe file in it.
+/// More reliable than checking permission bits, which don't account for ACLs,
+/// read-only mounts, or ownership mismatches.
+fn check_dir_writable(dir: &Path) -> Result<()> {
+    let probe = dir.join(format!(".bedpull_write_test_{}", std::process::id()));
+    std::fs::File::create(&probe)
+        .with_context(|| format!("output directory is not writable: {}", dir.display()))?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
 pub fn check_option_values(opts: &Opts) -> Result<()> {
     let has_bam = opts.bam.to_str() != Some("None");
     let has_cram = opts.cram.to_str() != Some("None");
@@ -271,6 +282,18 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
             "--min_region_quality requires --bam or --cram (quality scores are only available from alignment input)"
         );
     }
+    if opts.min_mapq > 0 && !has_bam && !has_cram {
+        bail!("--min_mapq requires --bam or --cram (PAF records have no mapping quality)");
+    }
+    if opts.include_secondary && !has_bam && !has_cram {
+        bail!("--include_secondary requires --bam or --cram (not applicable to PAF mode)");
+    }
+    if opts.include_supplementary && !has_bam && !has_cram {
+        bail!("--include_supplementary requires --bam or --cram (not applicable to PAF mode)");
+    }
+    if opts.partial && !has_bam && !has_cram {
+        bail!("--partial requires --bam or --cram (not yet supported in PAF mode)");
+    }
     if opts.hap_split && is_stdout(&opts.output) {
         bail!("--hap_split requires --output <file> (cannot split haplotypes to stdout)");
     }
@@ -299,6 +322,7 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
                 parent.display()
             );
         }
+        check_dir_writable(parent)?;
     }
 
     // Output parent directory must exist
@@ -317,6 +341,7 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
                 parent.display()
             );
         }
+        check_dir_writable(parent)?;
     }
 
     Ok(())
@@ -335,6 +360,7 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 
     fn make_opts(fastq: bool, bam: &str) -> Opts {
@@ -421,6 +447,60 @@ mod tests {
         o.paf = PathBuf::from("aln.paf");
         o.query_ref = PathBuf::from("asm.fa");
         assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn min_mapq_in_paf_mode_is_error() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.min_mapq = 20;
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn min_mapq_in_bam_mode_is_ok() {
+        let mut o = make_opts(false, "reads.bam");
+        o.min_mapq = 20;
+        assert!(check_option_values(&o).is_ok());
+    }
+
+    #[test]
+    fn include_secondary_in_paf_mode_is_error() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.include_secondary = true;
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn include_supplementary_in_paf_mode_is_error() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.include_supplementary = true;
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn partial_in_paf_mode_is_error() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.partial = true;
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn partial_in_bam_mode_is_ok() {
+        let mut o = make_opts(false, "reads.bam");
+        o.partial = true;
+        assert!(check_option_values(&o).is_ok());
+    }
+
+    #[test]
+    fn output_dir_not_writable_is_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let mut o = make_opts(false, "reads.bam");
+        o.output = dir.path().join("out.fasta");
+        let result = check_option_values(&o);
+        // restore permissions so the tempdir can be cleaned up
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err());
     }
 
     #[test]
