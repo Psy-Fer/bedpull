@@ -36,6 +36,7 @@ At least one input mode must be specified: `--bam`, `--cram`, or `--paf` + `--qu
 | `--include_secondary` | — | false | BAM, CRAM | Include secondary alignments (SAM flag `0x100`). Excluded by default. Errors if combined with `--paf`. |
 | `--include_supplementary` | — | false | BAM, CRAM | Include supplementary alignments (SAM flag `0x800`). Excluded by default. Errors if combined with `--paf`. |
 | `--partial` | — | false | BAM, CRAM | Include reads that only partially overlap the BED region. By default only reads spanning the entire region are returned. Errors if combined with `--paf` — PAF mode always returns whatever portion of the region an overlapping alignment covers. |
+| `--min_partial_coverage <F>` | — | `0` | BAM, CRAM | Minimum fraction (`0.0`-`1.0`) of the requested (region ± flanks) window a `--partial` read must cover to be included, similar to liftOver's `-minMatch`. `0` disables the filter (any overlap is accepted). Requires `--partial`; errors if set without it or outside `[0.0, 1.0]`. |
 | `--dedup` | — | false | all | Deduplicate output: if the same read or contig name is seen more than once across BED regions, emit it only the first time. |
 
 ## Extraction flags
@@ -120,4 +121,5 @@ fast with an actionable message rather than partway through processing. This inc
 existence, output/`--bed_out` directory existence *and* writability, mutually exclusive modes
 (`--bam`+`--cram`, alignment modes+`--paf`), `--paf`/`--query_ref` must be used together,
 `--fastq`/`--min_region_quality`/`--min_mapq`/`--include_secondary`/`--include_supplementary`/`--partial`
-requiring `--bam`/`--cram`, and `--hap_split` requiring a file `--output` (not stdout).
+requiring `--bam`/`--cram`, `--min_partial_coverage` requiring `--partial` and being within
+`[0.0, 1.0]`, and `--hap_split` requiring a file `--output` (not stdout).

@@ -75,6 +75,22 @@ bedpull --bam reads.bam --bed regions.bed --output out.fasta \
 
 Partial reads are clipped to whatever portion of the region they cover. Reads that start after `region_start` are extracted from read position 0; reads that end before `region_end` are extracted to the end of the read. When a read doesn't fully cover the requested (region ± `--flanks`) window, its header gets a `|missing_left=Nbp` and/or `|missing_right=Nbp` suffix recording how many bases were missed on each side — see [Output header format](#output-header-format).
 
+### Minimum partial coverage
+
+By default `--partial` accepts a read that overlaps the requested window by even a single base.
+To require a minimum fraction of coverage instead — similar to liftOver's `-minMatch` — add
+`--min_partial_coverage`:
+
+```bash
+bedpull --bam reads.bam --bed regions.bed --output out.fasta \
+    --partial \
+    --min_partial_coverage 0.9
+```
+
+A read is kept only if the reference span it actually covers (accounting for `--flanks`, if
+used) is at least 90% of the requested window; anything less is dropped. `--min_partial_coverage`
+requires `--partial` and must be between `0.0` (the default — no filter) and `1.0`.
+
 ## Flanks
 
 To extend the extraction window beyond the BED coordinates — for example to capture an insertion that sits just outside the annotated boundary — use `--flanks`, `--lflank`, or `--rflank`:

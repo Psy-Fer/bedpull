@@ -11,6 +11,13 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`--min_partial_coverage`** — minimum fraction (0.0-1.0) of the requested (region ± flanks)
+  window a `--partial` read must cover to be included, similar to liftOver's `-minMatch`.
+  Default `0.0` (no filter, any overlap accepted); requires `--partial`.
+
+- **PAF mode zero-output notice** — PAF mode now reports when a region produces no output,
+  matching BAM/CRAM's existing "No reads found... skipping" behavior.
+
 - **CRAM support (`--cram`)** — `extract_from_cram` mirrors BAM extraction (mapq, secondary/
   supplementary, partial, flanks, hap_split, region quality all work identically); optional
   `--reference` builds a lazy `fasta::Repository` for reference-compressed CRAMs.

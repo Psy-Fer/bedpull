@@ -37,6 +37,14 @@ pub struct BamConfig {
     /// subsequence is clipped to whatever portion the read covers.
     pub partial: bool,
 
+    /// Minimum fraction (0.0-1.0) of the requested (region ± flanks) window a
+    /// `partial` read must cover to be included. Reads/alignments below this
+    /// threshold are discarded, similar to liftOver's `-minMatch`. Default: `0.0`
+    /// (no filter — any overlap is accepted). Only meaningful when `partial` is
+    /// `true`; non-partial reads always cover the full window by construction, so
+    /// this is a no-op otherwise.
+    pub min_partial_coverage: f64,
+
     /// Minimum mean Phred quality of the extracted subsequence.
     /// After the CIGAR walk, the quality string of the extracted slice is scored
     /// with [`crate::utils::calculate_qscore`]; reads below this
@@ -53,6 +61,7 @@ impl Default for BamConfig {
             include_secondary: false,
             include_supplementary: false,
             partial: false,
+            min_partial_coverage: 0.0,
             min_region_quality: 0.0,
         }
     }
@@ -127,6 +136,28 @@ fn resolve_cuts(
             read_cuts.ref_end,
         ))
     }
+}
+
+/// Returns `false` if a read's actual reference coverage (`ref_start..ref_end`) falls short of
+/// `config.min_partial_coverage` as a fraction of the requested (region ± flanks) window
+/// (`desired_start..desired_end`). Always `true` when `min_partial_coverage` is `0.0` (the
+/// default) or the window is empty.
+fn passes_min_partial_coverage(
+    config: &BamConfig,
+    desired_start: usize,
+    desired_end: usize,
+    ref_start: usize,
+    ref_end: usize,
+) -> bool {
+    if config.min_partial_coverage <= 0.0 {
+        return true;
+    }
+    let desired_len = desired_end.saturating_sub(desired_start);
+    if desired_len == 0 {
+        return true;
+    }
+    let covered_len = ref_end.saturating_sub(ref_start);
+    (covered_len as f64) >= config.min_partial_coverage * (desired_len as f64)
 }
 
 /// Extract subsequences from all BAM reads that overlap a given region.
@@ -252,6 +283,9 @@ where
         ) else {
             continue;
         };
+        if !passes_min_partial_coverage(config, desired_start, desired_end, ref_start, ref_end) {
+            continue;
+        }
         let subseq = i_seq[read_start..read_end].to_vec();
         let subqual: String = quality_scores_str[read_start..read_end].to_string();
 
@@ -372,6 +406,9 @@ pub fn get_cram_reads(
         ) else {
             continue;
         };
+        if !passes_min_partial_coverage(config, desired_start, desired_end, ref_start, ref_end) {
+            continue;
+        }
 
         let subseq = i_seq[read_start..read_end].to_vec();
         let subqual: String = quality_scores_str[read_start..read_end].to_string();
@@ -535,6 +572,7 @@ mod tests {
         assert!(!c.include_secondary);
         assert!(!c.include_supplementary);
         assert!(!c.partial);
+        assert_eq!(c.min_partial_coverage, 0.0);
         assert_eq!(c.min_region_quality, 0.0);
     }
 
@@ -545,12 +583,14 @@ mod tests {
             include_secondary: true,
             include_supplementary: false,
             partial: true,
+            min_partial_coverage: 0.5,
             min_region_quality: 15.0,
         };
         assert_eq!(c.min_mapq, 20);
         assert!(c.include_secondary);
         assert!(!c.include_supplementary);
         assert!(c.partial);
+        assert_eq!(c.min_partial_coverage, 0.5);
         assert_eq!(c.min_region_quality, 15.0);
     }
 
@@ -626,6 +666,55 @@ mod tests {
         };
         let resolved = resolve_cuts(&read_cuts, &partial_config(), 110, 150, 100, 300);
         assert_eq!(resolved, Some((0, 300, 110, 150)));
+    }
+
+    // --- passes_min_partial_coverage ---
+
+    fn min_coverage_config(min_partial_coverage: f64) -> BamConfig {
+        BamConfig {
+            min_partial_coverage,
+            ..BamConfig::default()
+        }
+    }
+
+    #[test]
+    fn min_partial_coverage_zero_accepts_any_overlap() {
+        // Default (0.0): even 1 base out of a 100bp window passes.
+        let config = min_coverage_config(0.0);
+        assert!(passes_min_partial_coverage(&config, 100, 200, 150, 151));
+    }
+
+    #[test]
+    fn min_partial_coverage_full_span_always_passes() {
+        let config = min_coverage_config(1.0);
+        assert!(passes_min_partial_coverage(&config, 100, 200, 100, 200));
+    }
+
+    #[test]
+    fn min_partial_coverage_below_threshold_is_rejected() {
+        // Window is 100bp (100..200); covered span is 40bp (100..140) = 40% coverage.
+        let config = min_coverage_config(0.5);
+        assert!(!passes_min_partial_coverage(&config, 100, 200, 100, 140));
+    }
+
+    #[test]
+    fn min_partial_coverage_at_exactly_threshold_passes() {
+        // Window is 100bp; covered span is exactly 50bp = 50% coverage.
+        let config = min_coverage_config(0.5);
+        assert!(passes_min_partial_coverage(&config, 100, 200, 100, 150));
+    }
+
+    #[test]
+    fn min_partial_coverage_above_threshold_passes() {
+        // Window is 100bp; covered span is 90bp = 90% coverage.
+        let config = min_coverage_config(0.5);
+        assert!(passes_min_partial_coverage(&config, 100, 200, 105, 195));
+    }
+
+    #[test]
+    fn min_partial_coverage_empty_window_always_passes() {
+        let config = min_coverage_config(0.9);
+        assert!(passes_min_partial_coverage(&config, 100, 100, 100, 100));
     }
 
     // --- get_paf_reads: reused-reader plumbing ---

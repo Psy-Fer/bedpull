@@ -66,6 +66,12 @@ bedpull --cram reads.cram --bed regions.bed --output out.fastq \
 # Include partial overlaps
 bedpull --cram reads.cram --bed regions.bed --output out.fasta \
     --partial
+
+# Include partial overlaps, but require at least 90% coverage of the requested window
+# (see BAM mode's "Minimum partial coverage" section for details)
+bedpull --cram reads.cram --bed regions.bed --output out.fasta \
+    --partial \
+    --min_partial_coverage 0.9
 ```
 
 ## Flanks

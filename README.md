@@ -237,6 +237,13 @@ of the region (or `--flanks` window) fall outside the read's alignment:
 >read1|chr4:39260000-39380000|RFC1|missing_left=3480bp|missing_right=55332bp
 ```
 
+Use `--min_partial_coverage <0.0-1.0>` alongside `--partial` to drop reads that cover less than
+that fraction of the requested window, instead of accepting any overlap however small (similar
+to liftOver's `-minMatch`):
+```bash
+bedpull --bam reads.bam --bed regions.bed --output out.fasta --partial --min_partial_coverage 0.9
+```
+
 **PAF extraction:**
 ```
 >query_name|chr:ref_start-ref_end|bed_name|query_name:query_start-query_end|strand

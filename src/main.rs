@@ -103,6 +103,7 @@ fn bam_config(opts: &Opts) -> BamConfig {
         include_secondary: opts.include_secondary,
         include_supplementary: opts.include_supplementary,
         partial: opts.partial,
+        min_partial_coverage: opts.min_partial_coverage,
         min_region_quality: opts.min_region_quality,
     }
 }

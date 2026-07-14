@@ -107,6 +107,10 @@ pub struct Opts {
     #[clap(long = "partial", display_order = 9)]
     pub partial: bool,
 
+    /// Minimum fraction (0.0-1.0) of the requested region (± flanks) a --partial read must cover to be included (BAM/CRAM only, requires --partial; 0 = no filter, any overlap accepted)
+    #[clap(long = "min_partial_coverage", default_value = "0", display_order = 9)]
+    pub min_partial_coverage: f64,
+
     /// Minimum mean Phred quality of the extracted region to include a read (BAM/CRAM only, regardless of --fastq; 0 = no filter)
     #[clap(long = "min_region_quality", default_value = "0", display_order = 10)]
     pub min_region_quality: f64,
@@ -364,6 +368,17 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
     if opts.partial && !has_bam && !has_cram {
         bail!("--partial requires --bam or --cram (not yet supported in PAF mode)");
     }
+    if opts.min_partial_coverage > 0.0 && !opts.partial {
+        bail!(
+            "--min_partial_coverage requires --partial (no-op otherwise: non-partial reads always cover the full requested window)"
+        );
+    }
+    if opts.min_partial_coverage < 0.0 || opts.min_partial_coverage > 1.0 {
+        bail!(
+            "--min_partial_coverage must be between 0.0 and 1.0 (got {})",
+            opts.min_partial_coverage
+        );
+    }
     if opts.hap_split && is_stdout(&opts.output) {
         bail!("--hap_split requires --output <file> (cannot split haplotypes to stdout)");
     }
@@ -449,6 +464,7 @@ mod tests {
             include_secondary: false,
             include_supplementary: false,
             partial: false,
+            min_partial_coverage: 0.0,
             flanks: 0,
             lflank: 0,
             rflank: 0,
@@ -559,6 +575,44 @@ mod tests {
     fn partial_in_bam_mode_is_ok() {
         let mut o = make_opts(false, "reads.bam");
         o.partial = true;
+        assert!(check_option_values(&o).is_ok());
+    }
+
+    #[test]
+    fn min_partial_coverage_without_partial_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.min_partial_coverage = 0.5;
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn min_partial_coverage_with_partial_is_ok() {
+        let mut o = make_opts(false, "reads.bam");
+        o.partial = true;
+        o.min_partial_coverage = 0.5;
+        assert!(check_option_values(&o).is_ok());
+    }
+
+    #[test]
+    fn min_partial_coverage_above_one_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.partial = true;
+        o.min_partial_coverage = 1.5;
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn min_partial_coverage_negative_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.partial = true;
+        o.min_partial_coverage = -0.1;
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn min_partial_coverage_zero_with_partial_off_is_ok() {
+        // 0.0 is the "disabled" sentinel, so it's fine even without --partial.
+        let o = make_opts(false, "reads.bam");
         assert!(check_option_values(&o).is_ok());
     }
 
