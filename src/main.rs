@@ -530,6 +530,13 @@ pub fn extract_from_paf(
             rflank,
             opts.debug,
         )?;
+        if reads.is_empty() {
+            eprintln!(
+                "No overlapping alignments produced output for region in PAF file. Skipping region: {}",
+                region_name
+            );
+            continue;
+        }
 
         for (sequence, query_name, query_start, query_end, strand, hap) in reads {
             if opts.dedup && !seen.insert(query_name.clone()) {
