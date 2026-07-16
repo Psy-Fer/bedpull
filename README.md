@@ -213,6 +213,27 @@ bedpull solves this by:
   would otherwise be one alignment (`--stitch_records`)
 - reporting which input regions produced no output and why, via `--unmapped <file>` (similar to liftOver's own `-unmapped` file, but across BAM/CRAM/PAF modes)
 
+## Benchmarks
+
+liftOver is the default most people use, but it isn't the only coordinate lifting option: `paftools.js liftover` (minimap2's own PAF-based lifter), `pslMap` (UCSC kent's base-by-base chain projection), and `liftOver -multiple` + `liftOverMerge` (liftOver's own multi-hit mode plus a merge step) all perform better compared to plain liftOver. However, against all of them, bedpull (especially with `--stitch_records`) comes out ahead on every metric, benchmarked on 24,965 real structural variant windows from the GIAB HG002 v5.0q SV truth set (hs1 reference, HG002 T2T-Q100 diploid assembly):
+
+| | bedpull | bedpull+stitch | liftOver | paftools.js | pslMap | liftOver -multiple |
+|---|---|---|---|---|---|---|
+| Overall recall | 68.1% | **71.6%** | 36.7% | 68.0% | 67.2% | 68.2% |
+| DEL recall | 65.8% | **69.1%** | 5.0% | 65.7% | 64.6% | 65.5% |
+| INS recall | 70.5% | **74.2%** | 69.8% | 70.4% | 69.9% | 70.9% |
+| Recall on SVs ≥5000bp | 91.4% | **92.7%** | 44.3% | 85.2% | 91.4% | 70.4% |
+| Windows with zero output | 1,420 (5.7%) | **196 (0.8%)** | 8,027 (32.2%) | 179 (0.7%) | 3,078 (12.3%) | 252 (1.0%) |
+| F1 | 0.810 | **0.834** | 0.537 | 0.809 | 0.804 | 0.811 |
+| Detection AUC | 0.919 | **0.974** | 0.596 | 0.969 | 0.850 | 0.966 |
+
+Precision is 100% for every tool (verified against 24,965 size-matched negative-control
+windows), so the recall/F1/AUC differences above reflect a real difference in what each
+tool can detect, not a precision/recall tradeoff.
+
+Full methodology, a second independent confirmation leg (hg38↔hs1, official UCSC chain),
+and the reasoning behind every result: [`benchmark/README.md`](benchmark/README.md).
+
 ## Input Formats
 
 ### BED file
