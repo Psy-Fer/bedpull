@@ -487,16 +487,17 @@ since been run end to end — see Results below.
 | DEL recall | 65.8% | **69.1%** | 5.0% | 65.7% | 64.6% | 65.5% |
 | INS recall | 70.5% | **74.2%** | 69.8% | 70.4% | 69.9% | 70.9% |
 | Recall on SVs ≥5000bp | 91.4% | **92.7%** | 44.3% | 85.2% | 91.4% | 70.4% |
-| Windows with zero output | 1,420 (5.7%) | **224 (0.9%)** | 8,027 (32.2%) | 179 (0.7%) | 3,078 (12.3%) | 252 (1.0%) |
+| Windows with zero output | 1,420 (5.7%) | **196 (0.8%)** | 8,027 (32.2%) | 179 (0.7%) | 3,078 (12.3%) | 252 (1.0%) |
 | Precision (vs 24,965 size-matched negative controls) | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
 | F1 | 0.810 | **0.834** | 0.537 | 0.809 | 0.804 | 0.811 |
-| Detection AUC | 0.919 | **0.973** | 0.596 | 0.969 | 0.850 | 0.966 |
+| Detection AUC | 0.919 | **0.974** | 0.596 | 0.969 | 0.850 | 0.966 |
 
 **`bedpull --stitch_records`** (see `TODO.md` and `docs/src/paf-mode.md`) is now
 the best tool on this leg on *every* metric, including detection AUC — it
-edges out paftools.js there too (0.973 vs 0.969). This is the combined effect
-of two changes, both from the same investigation: cross-record stitching
-itself, and a real pre-existing bug it surfaced along the way. `get_paf_reads`
+edges out paftools.js there too (0.974 vs 0.969). This is the combined effect
+of several changes from the same investigation: cross-record stitching
+itself, plus a real pre-existing bug it surfaced along the way, plus a
+follow-up robustness pass. `get_paf_reads`
 used to call `get_read_cuts` per record, which has a documented sentinel
 convention (misattributing a boundary crossing whenever it coincides exactly
 with a record's own `align_start`) that BAM/CRAM's `--partial` mode knows how
@@ -504,14 +505,18 @@ to reinterpret but PAF mode never did — so any record whose clamped window
 edge landed exactly on its own start or end was silently discarded as
 "invalid," independent of whether a second record existed to stitch with at
 all. Replacing that per-record call with the same ambiguity-free
-`read_pos_at_ref` helper written for stitching fixed both at once. Zero-output
-windows dropped from 1,420 to 224 — a 84% reduction, most of it (~1,200
-windows) from the sentinel fix specifically, not the stitching logic itself
-(isolated by disabling stitching and testing the sentinel fix alone — see
-`TODO.md`'s 2026-07-16 entries for the exact breakdown). All of this from the
-*exact same PAF* bedpull already had, no new alignment or data. Confirmed on
-real data outside this benchmark too — a real chr1 chain boundary in the
-PATERNAL PAF that previously produced 0 output for a 50bp window now
+`read_pos_at_ref` helper written for stitching fixed both at once. A follow-up
+robustness pass then fixed three more gaps found the same way (flank-blind
+index query, a hard crash on any single bad contig name/CIGAR, and
+`read_start == read_end` wrongly treated as invalid rather than a valid
+zero-length "this window is entirely deleted" result — see `TODO.md`'s
+2026-07-16 entries for each). Zero-output windows dropped from 1,420 to 196 —
+an 86.2% reduction, most of it (~1,200 windows) from the sentinel fix
+specifically, not the stitching logic itself (isolated by disabling stitching
+and testing the sentinel fix alone). All of this from the *exact same PAF*
+bedpull already had, no new alignment or data. Confirmed on real data outside
+this benchmark too — a real chr1 chain boundary in the PATERNAL PAF that
+previously produced 0 output for a 50bp window now
 correctly stitches a 7,407bp extraction.
 
 bedpull recovers roughly 1.85x liftOver's overall recall, with the gap most
@@ -571,7 +576,7 @@ not by paftools.js's algorithm being meaningfully worse.
 This tie held for bedpull's *original* implementation. With
 `--stitch_records` (see the table above and "Two more UCSC kent tools"),
 bedpull now leads paftools.js on this leg on every metric, including
-detection AUC (71.6%/0.834/0.973 vs 68.0%/0.809/0.969) — the one class of
+detection AUC (71.6%/0.834/0.974 vs 68.0%/0.809/0.969) — the one class of
 failure paftools.js's point-lifting approach can't recover (a chain-boundary
 split, plus the sentinel bug the same investigation surfaced) is exactly
 what the fix targets, so the tie was a property of bedpull's *old*

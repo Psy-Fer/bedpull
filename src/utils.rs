@@ -397,6 +397,14 @@ pub fn extract_from_fasta_coords_reader<R>(
 where
     R: std::io::BufRead + std::io::Seek,
 {
+    // A zero-length request (start == end) is a valid result — e.g. a BED window
+    // that falls entirely inside a deletion has no corresponding query bases at
+    // all — but converting it to noodles' 1-based-inclusive syntax below would
+    // produce a backwards range ("chrom:N+1-N"). Short-circuit before that.
+    if start == end {
+        return Ok(String::new());
+    }
+
     // `start`/`end` are 0-based half-open (per this function's contract), but noodles'
     // "chrom:start-end" region syntax is 1-based inclusive — convert or every query
     // silently includes one extra base before `start`.
@@ -789,5 +797,15 @@ mod tests {
         let f = write_indexed_fasta(">seq1\nACGTACGTAC\n");
         let sequence = extract_from_fasta_coords(f.path().to_str().unwrap(), "seq1", 0, 4).unwrap();
         assert_eq!(sequence, "ACGT");
+    }
+
+    #[test]
+    fn extract_from_fasta_coords_zero_length_returns_empty_string() {
+        // start == end is a valid request (e.g. a BED window that falls entirely
+        // inside a deletion has no corresponding query bases) — must not be
+        // forwarded to noodles as a backwards 1-based region ("seq1:6-5").
+        let f = write_indexed_fasta(">seq1\nACGTACGTAC\n");
+        let sequence = extract_from_fasta_coords(f.path().to_str().unwrap(), "seq1", 5, 5).unwrap();
+        assert_eq!(sequence, "");
     }
 }

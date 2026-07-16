@@ -669,8 +669,13 @@ pub fn extract_from_paf(
 
         let (lflank, rflank) = effective_flanks(opts);
 
-        // Query index for overlapping entries
-        let overlapping_entries = index.query(chr, region_start, region_end);
+        // Query the flank-expanded window, not just the raw region — otherwise a
+        // record that only overlaps within the flank zone (relevant to both plain
+        // flank extraction and --stitch_records chain members) never reaches
+        // get_paf_reads at all, since it's filtered out here first.
+        let query_start = region_start.saturating_sub(lflank);
+        let query_end = region_end + rflank;
+        let overlapping_entries = index.query(chr, query_start, query_end);
         if opts.debug {
             eprintln!("Found {} overlapping alignments", overlapping_entries.len());
         }

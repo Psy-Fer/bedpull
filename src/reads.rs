@@ -228,14 +228,15 @@ where
         return Ok(None);
     };
 
-    let first_ops = first_cigar_str
-        .as_str()
-        .to_cigar_ops()
-        .context("invalid CIGAR string in PAF record")?;
-    let last_ops = last_cigar_str
-        .as_str()
-        .to_cigar_ops()
-        .context("invalid CIGAR string in PAF record")?;
+    // A malformed CIGAR in one candidate chain is this chain's problem, not the
+    // whole run's — decline to stitch rather than aborting every other region.
+    let (Ok(first_ops), Ok(last_ops)) = (
+        first_cigar_str.as_str().to_cigar_ops(),
+        last_cigar_str.as_str().to_cigar_ops(),
+    ) else {
+        eprintln!("Warning: invalid CIGAR string in a stitch chain member, skipping stitch");
+        return Ok(None);
+    };
 
     // Deliberately not get_read_cuts: it tracks two boundaries per call and
     // decides which slot to write into based on whether the first has
@@ -266,9 +267,13 @@ where
         )
     };
 
-    if query_start >= query_end {
+    // query_start == query_end is a valid (if unusual) zero-length result — the
+    // whole stitched span collapsed to a single query position, meaning the
+    // window has no corresponding query bases at all. Only a genuinely
+    // inverted span (query_start > query_end) is an error.
+    if query_start > query_end {
         eprintln!(
-            "Warning: stitched chain produced invalid coordinates (start {} >= end {}), skipping",
+            "Warning: stitched chain produced invalid coordinates (start {} > end {}), skipping",
             query_start, query_end
         );
         return Ok(None);
@@ -285,14 +290,21 @@ where
         );
     }
 
-    let sequence =
-        extract_from_fasta_coords_reader(fasta_reader, &first.query_name, query_start, query_end)
-            .with_context(|| {
-            format!(
-                "failed to extract stitched sequence for {}",
-                first.query_name
-            )
-        })?;
+    let sequence = match extract_from_fasta_coords_reader(
+        fasta_reader,
+        &first.query_name,
+        query_start,
+        query_end,
+    ) {
+        Ok(seq) => seq,
+        Err(e) => {
+            eprintln!(
+                "Warning: failed to extract stitched sequence for {}: {:#}, skipping",
+                first.query_name, e
+            );
+            return Ok(None);
+        }
+    };
     let sequence = if strand == '-' {
         revcomp(&sequence)
     } else {
@@ -764,10 +776,18 @@ where
             }
         };
 
-        let cigar_ops = cigar_str
-            .as_str()
-            .to_cigar_ops()
-            .context("invalid CIGAR string in PAF record")?;
+        // A malformed CIGAR in one record is this record's problem, not the
+        // whole run's — skip it and keep processing the rest.
+        let cigar_ops = match cigar_str.as_str().to_cigar_ops() {
+            Ok(ops) => ops,
+            Err(e) => {
+                eprintln!(
+                    "Warning: invalid CIGAR string in PAF record: {:#}, skipping",
+                    e
+                );
+                continue;
+            }
+        };
 
         // Deliberately read_pos_at_ref, not get_read_cuts: get_read_cuts tracks
         // two boundaries per call and decides which slot to write into based on
@@ -786,9 +806,13 @@ where
             continue;
         };
 
-        if read_start >= read_end {
+        // read_start == read_end is a valid (if unusual) zero-length result — the
+        // whole requested span falls inside a deletion, so it has no
+        // corresponding query bases at all. Only a genuinely inverted span
+        // (read_start > read_end) is an error.
+        if read_start > read_end {
             eprintln!(
-                "Warning: Invalid coordinates (start {} >= end {}), skipping",
+                "Warning: Invalid coordinates (start {} > end {}), skipping",
                 read_start, read_end
             );
             continue;
@@ -816,13 +840,24 @@ where
             );
         }
 
-        let sequence = extract_from_fasta_coords_reader(
+        // A single bad/mismatched contig name (e.g. a PAF built against a
+        // different FASTA than --query_ref) shouldn't abort every other
+        // region's extraction — skip just this record instead.
+        let sequence = match extract_from_fasta_coords_reader(
             fasta_reader,
             &paf_record.query_name,
             query_start,
             query_end,
-        )
-        .with_context(|| format!("failed to extract sequence for {}", paf_record.query_name))?;
+        ) {
+            Ok(seq) => seq,
+            Err(e) => {
+                eprintln!(
+                    "Warning: failed to extract sequence for {}: {:#}, skipping",
+                    paf_record.query_name, e
+                );
+                continue;
+            }
+        };
 
         let sequence = if paf_record.strand == '-' {
             revcomp(&sequence)
@@ -1400,5 +1435,123 @@ mod tests {
         let (sequence, _, query_start, query_end, ..) = &reads[0];
         assert_eq!((*query_start, *query_end), (10, 20));
         assert_eq!(sequence, "CCCCCCCCCC");
+    }
+
+    // --- window entirely inside a deletion: valid zero-length result ---
+
+    #[test]
+    fn window_entirely_inside_deletion_returns_empty_sequence_not_skipped() {
+        // target [1000,1020): 5M (1000-1005), 10D (1005-1015), 5M (1015-1020);
+        // query [0,10). A window fully inside the 10bp deletion has no
+        // corresponding query bases — read_start == read_end is the correct
+        // answer here, not "invalid coordinates".
+        let paf_contents = "q1\t10\t0\t10\t+\tchr1\t2000\t1000\t1020\t10\t20\t60\tcg:Z:5M10D5M\n";
+        let fasta_contents = ">q1\nAAAAACCCCC\n";
+        let (_paf_file, mut paf_reader, mut fasta_reader) =
+            setup_stitch_reader(paf_contents, fasta_contents);
+
+        let entry = PafIndexEntry {
+            offset: 0,
+            target_start: 1000,
+            target_end: 1020,
+        };
+        let entries = [&entry];
+
+        let reads = get_paf_reads(
+            &mut paf_reader,
+            &mut fasta_reader,
+            &entries,
+            1007,
+            1012,
+            0,
+            0,
+            StitchConfig::default(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(reads.len(), 1);
+        let (sequence, _, query_start, query_end, ..) = &reads[0];
+        assert_eq!(sequence, "");
+        assert_eq!((*query_start, *query_end), (5, 5));
+    }
+
+    // --- graceful degradation: one bad record shouldn't error the whole call ---
+
+    #[test]
+    fn invalid_cigar_in_one_record_is_skipped_not_an_error() {
+        let paf_contents = "q1\t20\t0\t20\t+\tchr1\t2000\t1000\t1020\t20\t20\t60\tcg:Z:not_a_cigar\n\
+                             q2\t20\t0\t20\t+\tchr1\t2000\t1000\t1020\t20\t20\t60\tcg:Z:20M\n";
+        let fasta_contents = ">q1\nAAAAAAAAAAAAAAAAAAAA\n>q2\nCCCCCCCCCCCCCCCCCCCC\n";
+        let (_paf_file, mut paf_reader, mut fasta_reader) =
+            setup_stitch_reader(paf_contents, fasta_contents);
+
+        let entry_bad = PafIndexEntry {
+            offset: 0,
+            target_start: 1000,
+            target_end: 1020,
+        };
+        let entry_good = PafIndexEntry {
+            offset: paf_contents.lines().next().unwrap().len() as u64 + 1,
+            target_start: 1000,
+            target_end: 1020,
+        };
+        let entries = [&entry_bad, &entry_good];
+
+        // Must not error — the bad record is skipped, the good one still succeeds.
+        let reads = get_paf_reads(
+            &mut paf_reader,
+            &mut fasta_reader,
+            &entries,
+            1000,
+            1020,
+            0,
+            0,
+            StitchConfig::default(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].1, "q2");
+    }
+
+    #[test]
+    fn missing_fasta_contig_in_one_record_is_skipped_not_an_error() {
+        // q_missing isn't in the FASTA at all (e.g. a PAF built against a
+        // different assembly than --query_ref) — must not abort the whole run.
+        let paf_contents = "q_missing\t20\t0\t20\t+\tchr1\t2000\t1000\t1020\t20\t20\t60\tcg:Z:20M\n\
+                             q2\t20\t0\t20\t+\tchr1\t2000\t1000\t1020\t20\t20\t60\tcg:Z:20M\n";
+        let fasta_contents = ">q2\nCCCCCCCCCCCCCCCCCCCC\n";
+        let (_paf_file, mut paf_reader, mut fasta_reader) =
+            setup_stitch_reader(paf_contents, fasta_contents);
+
+        let entry_bad = PafIndexEntry {
+            offset: 0,
+            target_start: 1000,
+            target_end: 1020,
+        };
+        let entry_good = PafIndexEntry {
+            offset: paf_contents.lines().next().unwrap().len() as u64 + 1,
+            target_start: 1000,
+            target_end: 1020,
+        };
+        let entries = [&entry_bad, &entry_good];
+
+        let reads = get_paf_reads(
+            &mut paf_reader,
+            &mut fasta_reader,
+            &entries,
+            1000,
+            1020,
+            0,
+            0,
+            StitchConfig::default(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].1, "q2");
     }
 }
