@@ -1,5 +1,11 @@
 # bedpull
 
+[![Crates.io](https://img.shields.io/crates/v/bedpull.svg)](https://crates.io/crates/bedpull)
+[![Downloads](https://img.shields.io/crates/d/bedpull.svg)](https://crates.io/crates/bedpull)
+[![docs.rs](https://img.shields.io/docsrs/bedpull)](https://docs.rs/bedpull)
+[![CI](https://github.com/Psy-Fer/bedpull/actions/workflows/ci.yml/badge.svg)](https://github.com/Psy-Fer/bedpull/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/crates/l/bedpull.svg)](LICENSE)
+
 Extract sequences from BAM, CRAM, or PAF/FASTA files using BED coordinates. A tool for sequence extraction that handles structural variants, insertions, and complex alignments.
 
 ## Overview
