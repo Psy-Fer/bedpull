@@ -1,15 +1,16 @@
 # bedpull
 
-Extract sequences from BAM, PAF, or FASTA files using BED coordinates. A fast, reliable tool for sequence extraction that handles structural variants, insertions, and complex alignments.
+Extract sequences from BAM, CRAM, or PAF/FASTA files using BED coordinates. A tool for sequence extraction that handles structural variants, insertions, and complex alignments.
 
 ## Overview
 
-`bedpull` extracts sequences from alignment files (BAM) or assemblies (FASTA via PAF alignments) based on BED region coordinates. Unlike traditional coordinate lifting tools like liftOver, bedpull uses CIGAR-aware extraction to correctly handle:
+`bedpull` extracts sequences from alignment files (BAM/CRAM) or assemblies (FASTA via PAF alignments) based on BED region coordinates. Unlike traditional coordinate lifting tools like liftOver, bedpull uses CIGAR-aware extraction to correctly handle:
 
 - Large insertions and deletions
 - Structural variants
 - Complex rearrangements
-- Phased haplotype assemblies (coming soon!)
+- Phased haplotype assemblies (`--hap_split`)
+- Large SVs split across multiple PAF alignment records (`--stitch_records`)
 
 
 ## Installation
@@ -57,6 +58,15 @@ bedpull --bam alignments.bam \
         --output sequences.fasta
 ```
 
+### Extract from CRAM (aligned reads)
+```bash
+bedpull --cram alignments.cram \
+        --reference reference.fasta \
+        --bed regions.bed \
+        --output sequences.fasta
+```
+`--reference` is only required for reference-compressed CRAMs; CRAMs with embedded sequences don't need it.
+
 ### Extract from FASTA via PAF alignment
 ```bash
 bedpull --paf assembly_to_reference.paf \
@@ -66,20 +76,31 @@ bedpull --paf assembly_to_reference.paf \
 ```
 
 ### Options
-```
-Options:
-  -b, --bam <FILE>              Input BAM file (for extracting aligned reads)
-      --paf <FILE>              Input PAF file (for assembly-to-reference extraction)
-  -q, --query_ref <FILE>        Query FASTA file (required with --paf)
-  -r, --bed <FILE>              BED file with regions to extract
-  -o, --output <FILE>           Output file (fasta/fastq)
-      --fastq                   Output FASTQ format (BAM only)
-      --mapq <INT>              Minimum mapping quality [default: 0]
-      --unmapped <FILE>         Write input regions that produced no output here, with reasons
-      --debug                   Print verbose per-region/per-read diagnostic output
-  -h, --help                    Print help
-  -V, --version                 Print version
-```
+
+`bedpull --help` always reflects the current flag set; the full reference (with
+defaults, mode restrictions, and validation rules) is in
+[`docs/src/cli-reference.md`](docs/src/cli-reference.md). The most commonly used flags:
+
+| Flag | Mode | Description |
+|------|------|-------------|
+| `-b, --bam <FILE>` | BAM | Coordinate-sorted BAM file (index auto-built if missing) |
+| `--cram <FILE>` | CRAM | CRAM file (index auto-built if missing) |
+| `-f, --reference <FILE>` | CRAM | Reference FASTA for reference-compressed CRAMs |
+| `--paf <FILE>` | PAF | PAF alignment file with a `cg:Z:` CIGAR tag |
+| `--query_ref <FILE>` | PAF | Query FASTA to extract from (required with `--paf`) |
+| `-r, --bed <FILE>` | all | BED file of target regions (required) |
+| `-o, --output <FILE>` | all | Output file; `-` for stdout (default) |
+| `--fastq` | BAM, CRAM | Write FASTQ instead of FASTA |
+| `--min_mapq <N>` | BAM, CRAM | Minimum mapping quality (`0` = no filter) |
+| `--partial` / `--min_partial_coverage <F>` | BAM, CRAM | Include partially-overlapping reads / minimum coverage fraction |
+| `--flanks <N>` / `--lflank <N>` / `--rflank <N>` | all | Expand the extraction window before the CIGAR walk |
+| `--hap_split` | BAM, CRAM, PAF | Split output into per-haplotype files by `HP`/`hp:i:` tag |
+| `--dedup` | all | Emit each read/contig only once across all BED regions |
+| `--stitch_records` / `--max_stitch_gap <N>` | PAF | Stitch a region across multiple chained PAF records when no single record spans it |
+| `--bed_out <FILE>` | PAF | Write lifted-over query coordinates as BED6 |
+| `--unmapped <FILE>` | all | Write regions that produced no output, with reasons |
+| `--debug` | all | Verbose per-region/per-read diagnostics |
+| `-h, --help` / `-V, --version` | - | Print help / version |
 
 ## Use Cases
 
@@ -136,13 +157,13 @@ bedpull --paf hg002pat_to_ref.paf \
 ```
 
 ### Per-Haplotype Consensus Building
-`bedpull` doesn't build consensus sequences itself — for that, pair it with
+`bedpull` doesn't build consensus sequences itself. Pair it with
 [poa-consensus](https://github.com/Psy-Fer/poa-consensus), a banded partial-order
-alignment tool built for exactly this. Use `--hap_split` to bin reads from a
+alignment tool built for that purpose. Use `--hap_split` to bin reads from a
 BAM's `HP` tag (or a PAF's `hp:i:` tag) into one FASTA per haplotype, then run
 `poa-consensus` on each file to get a per-haplotype consensus. Use a single-region
 BED (or one BED file per locus) so each haplotype FASTA holds reads from only
-that region — `poa-consensus` builds one consensus per input file.
+that region; `poa-consensus` builds one consensus per input file.
 
 ```bash
 # 1. Extract reads for one region, split by haplotype
@@ -175,6 +196,9 @@ poa-consensus rfc1_reads.h2.fasta > rfc1_h2_consensus.fasta
 4. Extract sequence from the query FASTA file using calculated positions
 5. Return sequences with both reference and query coordinates in header
 6. Write bed file with query coordinates
+7. With `--stitch_records`, if no single record spans the region, look for a chain of
+   records (same query contig and strand, contiguous in target space) that together do,
+   and extract one sequence across the whole chain
 
 ## Why bedpull?
 
@@ -185,7 +209,9 @@ Traditional coordinate conversion tools (like liftOver) fail when:
 
 bedpull solves this by:
 - parsing CIGAR operations of full alignments to get exact coordinates
-- reporting which input regions produced no output and why, via `--unmapped <file>` — similar to liftOver's own `-unmapped` file, but across BAM/CRAM/PAF modes
+- stitching a region across multiple chained PAF records when a large SV splits what
+  would otherwise be one alignment (`--stitch_records`)
+- reporting which input regions produced no output and why, via `--unmapped <file>` (similar to liftOver's own `-unmapped` file, but across BAM/CRAM/PAF modes)
 
 ## Input Formats
 
@@ -210,6 +236,13 @@ automatically the first time you run it against that file:
 samtools view -bS example.sam | samtools sort -o example.bam
 bedpull --bam example.bam --bed regions.bed --output out.fasta
 ```
+
+### CRAM file
+Must be coordinate-sorted. If the `.crai` index is missing, bedpull builds it
+automatically the first time you run it against that file. Pass `--reference` if the
+CRAM is reference-compressed (the common case). A reference-compressed CRAM opened
+without `--reference` decodes sequences incorrectly rather than raising an error, so
+pass `--reference` whenever extracted sequences look empty or garbled.
 
 ### PAF file
 Standard PAF format from minimap2 or similar aligners. Must include CIGAR string (`cg:Z:` tag).
@@ -251,11 +284,6 @@ bedpull --bam reads.bam --bed regions.bed --output out.fasta --partial --min_par
 >query_name|chr:ref_start-ref_end|bed_name|query_name:query_start-query_end|strand
 >chr4_PATERNAL|chr4:39318077-39318136|RFC1|chr4_PATERNAL:39438031-39438610|+
 ```
-
-## TODO
-
-- add threading for very large bams/pafs
-
 
 ## Citation
 

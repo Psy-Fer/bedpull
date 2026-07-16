@@ -5,7 +5,7 @@ CRAM mode works identically to BAM mode but reads from an indexed CRAM file. All
 ## Requirements
 
 - A CRAM file. If the `<file>.cram.crai` index is missing, bedpull builds it automatically the
-  first time you run against that file — no `samtools` required.
+  first time you run against that file, so `samtools` is not required.
 - For reference-compressed CRAMs: the reference FASTA used during compression. If its `.fai`
   index is missing, it's auto-built the same way.
 - For CRAMs with embedded sequences (created with `samtools view -C` from a FASTA source with no external reference, or with `embed_ref=2`): no reference is needed.
@@ -116,7 +116,7 @@ When `--hap_split` is active and the read carries an HP tag:
 ```
 
 With `--partial`, a read that doesn't fully span the requested window gets a
-`|missing_left=Nbp`/`|missing_right=Nbp` suffix — see the [BAM mode](./bam-mode.md#output-header-format) page for details.
+`|missing_left=Nbp`/`|missing_right=Nbp` suffix; see the [BAM mode](./bam-mode.md#output-header-format) page for details.
 
 ## Diagnostics
 
@@ -140,6 +140,6 @@ If you do not have the original reference available at runtime, create a self-co
 samtools view -C --no-PG reads.bam -o reads.cram
 ```
 
-The `samtools index` step is optional — bedpull builds the `.crai` itself on first use if it's missing.
+The `samtools index` step is optional; bedpull builds the `.crai` itself on first use if it's missing.
 
 The resulting CRAM stores the decoded sequences internally; no `--reference` flag is needed.

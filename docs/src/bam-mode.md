@@ -11,7 +11,7 @@ bedpull \
     --output extracted.fasta
 ```
 
-The BAM must be coordinate-sorted. If the companion `.bam.bai` index is missing, bedpull builds it automatically the first time you run against that file — no `samtools` required. The output is FASTA by default; use `--fastq` to include quality scores.
+The BAM must be coordinate-sorted. If the companion `.bam.bai` index is missing, bedpull builds it automatically the first time you run against that file, so `samtools` is not required. The output is FASTA by default; use `--fastq` to include quality scores.
 
 Omit `--output` (or pass `-`) to write to stdout:
 
@@ -53,8 +53,8 @@ bedpull --bam reads.bam --bed regions.bed --output out.fasta \
 ### Quality of the extracted region
 
 Filter on the mean Phred score of the extracted slice. This reads the quality scores from the
-BAM record itself, so it applies whether or not you're also using `--fastq` for output — it's
-not a FASTQ-only feature, just most visibly useful when you're keeping the quality string:
+BAM record itself, so it applies regardless of `--fastq`; the effect is just most visible when
+you're keeping the quality string in the output:
 
 ```bash
 bedpull --bam reads.bam --bed regions.bed --output out.fastq \
@@ -73,12 +73,12 @@ bedpull --bam reads.bam --bed regions.bed --output out.fasta \
     --partial
 ```
 
-Partial reads are clipped to whatever portion of the region they cover. Reads that start after `region_start` are extracted from read position 0; reads that end before `region_end` are extracted to the end of the read. When a read doesn't fully cover the requested (region ± `--flanks`) window, its header gets a `|missing_left=Nbp` and/or `|missing_right=Nbp` suffix recording how many bases were missed on each side — see [Output header format](#output-header-format).
+Partial reads are clipped to whatever portion of the region they cover. Reads that start after `region_start` are extracted from read position 0; reads that end before `region_end` are extracted to the end of the read. When a read doesn't fully cover the requested (region ± `--flanks`) window, its header gets a `|missing_left=Nbp` and/or `|missing_right=Nbp` suffix recording how many bases were missed on each side; see [Output header format](#output-header-format).
 
 ### Minimum partial coverage
 
 By default `--partial` accepts a read that overlaps the requested window by even a single base.
-To require a minimum fraction of coverage instead — similar to liftOver's `-minMatch` — add
+To require a minimum fraction of coverage instead, similar to liftOver's `-minMatch`, add
 `--min_partial_coverage`:
 
 ```bash
@@ -89,11 +89,11 @@ bedpull --bam reads.bam --bed regions.bed --output out.fasta \
 
 A read is kept only if the reference span it actually covers (accounting for `--flanks`, if
 used) is at least 90% of the requested window; anything less is dropped. `--min_partial_coverage`
-requires `--partial` and must be between `0.0` (the default — no filter) and `1.0`.
+requires `--partial` and must be between `0.0` (the default, meaning no filter) and `1.0`.
 
 ## Flanks
 
-To extend the extraction window beyond the BED coordinates — for example to capture an insertion that sits just outside the annotated boundary — use `--flanks`, `--lflank`, or `--rflank`:
+To extend the extraction window beyond the BED coordinates, for example to capture an insertion that sits just outside the annotated boundary, use `--flanks`, `--lflank`, or `--rflank`:
 
 ```bash
 # Symmetric 500 bp flank on both sides

@@ -1,12 +1,12 @@
 # PAF Mode
 
-PAF mode extracts sequences from a query FASTA using coordinates derived from a PAF (Pairwise mApping Format) alignment file. The typical use case is assembly-to-reference mapping: you have aligned an assembly to a reference with `minimap2`, you have a set of reference BED regions, and you want to pull out the corresponding assembly sequence — including any insertions the assembly carries within those regions.
+PAF mode extracts sequences from a query FASTA using coordinates derived from a PAF (Pairwise mApping Format) alignment file. The typical use case is assembly-to-reference mapping: you have aligned an assembly to a reference with `minimap2`, you have a set of reference BED regions, and you want to pull out the corresponding assembly sequence, including any insertions the assembly carries within those regions.
 
 ## Requirements
 
 - A PAF file with the `cg:Z:` CIGAR tag. Produce this with `minimap2 -c` or `minimap2 --cs=long`.
 - The query FASTA (the assembly). If its `.fai` index is missing, bedpull builds it
-  automatically the first time you run against that file — no `samtools` required.
+  automatically the first time you run against that file, so `samtools` is not required.
 
 `--partial` (see [BAM mode](./bam-mode.md#partial-overlaps)) is BAM/CRAM-only and errors if combined with `--paf`; PAF mode always extracts whatever portion of the region an overlapping alignment covers (see [Alignment coverage warnings](#alignment-coverage-warnings) below).
 
@@ -70,7 +70,7 @@ bedpull \
     --flanks 500
 ```
 
-The effective window is clamped to the actual extent of each overlapping alignment, so a flank that extends beyond the alignment boundary does not cause an error — it is silently truncated.
+The effective window is clamped to the actual extent of each overlapping alignment, so a flank that extends beyond the alignment boundary does not cause an error; it is silently truncated.
 
 ## BED liftover output
 
@@ -159,7 +159,7 @@ files with many overlapping alignments.
 ## Cross-record stitching
 
 A single PAF record only ever covers a contiguous block of one alignment. A large structural
-variant — most often a big novel insertion with no homologous target sequence — frequently
+variant, most often a big novel insertion with no homologous target sequence, frequently
 causes the aligner to emit *two or more separate, chained records* instead of one record with a
 large indel operation. Without help, a BED region spanning that boundary is only ever partially
 extracted from whichever single record happens to overlap it (or produces two separate partial
@@ -167,7 +167,7 @@ hits, one per record).
 
 `--stitch_records` looks for a chain of records that share a query contig and strand, are
 contiguous in target space (within `--max_stitch_gap` bp), and together span the requested
-region — then extracts one sequence across the whole chain in a single slice, rather than
+region, then extracts one sequence across the whole chain in a single slice instead of
 walking each record's CIGAR separately. Any "gap" in query space between chain members (the
 inserted sequence itself, which has no aligned counterpart in either record) is spliced in
 directly from the raw query FASTA, since that gap *is* the structural variant the aligner split
@@ -179,7 +179,7 @@ bedpull --paf assembly.paf --query_ref assembly.fa --bed regions.bed \
 ```
 
 `--max_stitch_gap` (default `10000`) bounds only the *target*-side gap between consecutive
-chain members — the reconstructed query-side splice (the insertion itself) can be much larger
+chain members. The reconstructed query-side splice (the insertion itself) can be much larger
 and isn't separately bounded. Off by default; when a single record already fully covers a
 region, stitching is skipped even if enabled, since there's nothing to bridge.
 

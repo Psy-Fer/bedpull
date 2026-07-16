@@ -19,17 +19,17 @@ use bedpull::{
     CigarOp, CigarOps, ToCigarOps,
     // PAF index and record access
     PafIndex, PafIndexEntry, PafRecord, read_paf_record_at_offset, read_paf_record_from_reader,
-    // BAM/CRAM extraction
-    BamConfig, BamRead, PafRead, get_bam_reads, get_cram_reads, get_paf_reads,
+    // BAM/CRAM/PAF extraction
+    BamConfig, BamRead, PafRead, StitchConfig, get_bam_reads, get_cram_reads, get_paf_reads,
     // Core utilities
-    ReadCuts, get_read_cuts, calculate_qscore,
+    ReadCuts, get_read_cuts, calculate_qscore, revcomp,
     read_bed, write_fasta_record, write_fastq_record,
     extract_from_fasta_coords, extract_from_fasta_coords_reader,
 };
 ```
 
 `read_paf_record_at_offset` and `extract_from_fasta_coords` each open their file fresh on
-every call — fine for a one-off lookup. `read_paf_record_from_reader` and
+every call, which is fine for a one-off lookup. `read_paf_record_from_reader` and
 `extract_from_fasta_coords_reader` take an already-open reader instead, so you can open the
 PAF/FASTA once and reuse it across many records; see [Example 3](#example-3-paf-based-extraction).
 
@@ -76,7 +76,7 @@ fn extract_region(bam_path: &str, region_str: &str) -> Result<()> {
 `get_bam_reads` returns a `Vec<BamRead>`, where each element is a tuple
 `(name, sequence, quality_string, ref_start, ref_end, haplotype)`. The `sequence`
 field contains only the bases that fall within the requested region after the CIGAR
-walk — inserted bases are included, deleted bases are absent.
+walk: inserted bases are included, deleted bases are absent.
 
 ## Example 2: CIGAR coordinate math with get_read_cuts
 
@@ -130,10 +130,10 @@ reference covered: [3-7]
 
 ## Example 3: PAF-based extraction
 
-`get_paf_reads` is the high-level entry point — it drives the CIGAR walk, the FASTA extraction,
+`get_paf_reads` is the high-level entry point: it drives the CIGAR walk, the FASTA extraction,
 and the minus-strand reverse-complement for you. It takes an already-open PAF reader and an
 already-open indexed FASTA reader so you can call it once per region (or even across many
-regions) without reopening either file each time — reopening per record is the single biggest
+regions) without reopening either file each time. Reopening per record is the single biggest
 cost in PAF-mode extraction once you're processing more than a handful of alignments.
 
 ```rust
@@ -193,18 +193,18 @@ fn extract_from_paf(
 ```
 
 To process many regions, open `paf_reader` and `fasta_reader` once outside a loop over regions
-and call `get_paf_reads` once per region — exactly what `bedpull`'s own CLI does internally.
+and call `get_paf_reads` once per region, exactly what `bedpull`'s own CLI does internally.
 
 ## Notes on the coordinate convention
 
 `get_read_cuts` uses a **mixed coordinate system** that matches the conventions of its two callers:
 
-- `align_start` is **1-based** (noodles `Position` from BAM; PAF `target_start` is 0-based but is used with the CIGAR walk in a way that matches 1-based BAM behaviour — see the [Concepts](concepts.md) chapter for details).
+- `align_start` is **1-based** (noodles `Position` from BAM; PAF `target_start` is 0-based but is used with the CIGAR walk in a way that matches 1-based BAM behaviour; see the [Concepts](concepts.md) chapter for details).
 - `region_start` and `region_end` are **0-based** (directly from BED).
 
 Do not normalise both to the same base before calling `get_read_cuts`. The test suite in `src/utils.rs` documents the exact expected behaviour for all edge cases.
 
 `extract_from_fasta_coords`/`extract_from_fasta_coords_reader` take `start`/`end` as **0-based
-half-open** — the same convention as everywhere else in the crate — and convert internally to
+half-open**, the same convention as everywhere else in the crate, and convert internally to
 noodles' 1-based-inclusive region syntax. Pass `read_cuts`/`get_paf_reads` output straight
 through without adjusting it yourself.
