@@ -248,12 +248,20 @@ pub fn read_pos_at_ref(
 
 /// Parse a BED file and return a list of `(region, name, chromosome)` triples.
 ///
-/// Reads 3- or 4-column BED format via [`crate::bed::BedReader`]. The
-/// returned `Region` uses a noodles 1-based closed interval (BED `start` is
-/// promoted with `Position::try_from`). The `name` field comes from the optional
-/// 4th column; if absent it defaults to `"chrom:start-end"`. The `chromosome`
-/// string is the raw first column, kept separately so callers can use it as a
-/// plain string key (e.g. for PAF index lookups) without parsing the `Region`.
+/// Reads 3- or 4-column BED format via [`crate::bed::BedReader`]. BED's `start`/
+/// `end` are 0-based, but noodles' `Position` is a `NonZeroUsize` and cannot
+/// represent `0` — a BED region starting at the very first base of a
+/// chromosome (`start == 0`, an extremely common, valid coordinate) would
+/// otherwise fail to convert and abort the entire run. Both bounds are stored
+/// shifted by `+1` (`record.start + 1`, `record.end + 1`) to sidestep that,
+/// and every caller that recovers a bound via `usize::from(position)` must
+/// subtract `1` back out — see `region_bounds` in `main.rs`, which is the only
+/// place this should happen. The `name` field comes from the optional 4th
+/// column; if absent it defaults to `"chrom:start-end"` using the *original*
+/// (unshifted) BED coordinates, not the internal `+1` representation. The
+/// `chromosome` string is the raw first column, kept separately so callers
+/// can use it as a plain string key (e.g. for PAF index lookups) without
+/// parsing the `Region`.
 pub fn read_bed(path: &Path, debug: bool) -> Result<Vec<(Region, String, String)>> {
     let mut regions: Vec<(Region, String, String)> = vec![];
     let reader = BedReader::from_path(path).context("failed to open BED file")?;
@@ -265,15 +273,16 @@ pub fn read_bed(path: &Path, debug: bool) -> Result<Vec<(Region, String, String)
                 }
                 let chr: String = record.chrom.clone();
                 let start =
-                    Position::try_from(record.start).context("invalid BED start coordinate")?;
-                let end = Position::try_from(record.end).context("invalid BED end coordinate")?;
+                    Position::try_from(record.start + 1).context("invalid BED start coordinate")?;
+                let end =
+                    Position::try_from(record.end + 1).context("invalid BED end coordinate")?;
                 let interval: Interval = Interval::from(start..=end);
                 if debug {
                     eprintln!("region: {:?}", Region::new(record.chrom.clone(), interval));
                 }
                 let name = record
                     .name
-                    .unwrap_or_else(|| format!("{}:{}-{}", record.chrom, start, end));
+                    .unwrap_or_else(|| format!("{}:{}-{}", record.chrom, record.start, record.end));
                 regions.push((Region::new(record.chrom, interval), name, chr));
             }
             Err(e) => eprintln!("Error: {}", e),

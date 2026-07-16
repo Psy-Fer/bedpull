@@ -135,26 +135,39 @@ impl Default for StitchConfig {
 /// `[desired_start, desired_end)`. Returns the original indices into
 /// `records` belonging to the winning chain, sorted by `target_start`, or
 /// `None` if no such chain exists. When more than one candidate chain
-/// qualifies, the first one found wins (in `records` iteration order) —
-/// good enough for the common case of one real split alignment per region;
-/// pathological inputs with multiple overlapping candidate chains aren't
-/// specially disambiguated.
+/// qualifies, the first one found wins, where "first" means the
+/// `(query_name, strand)` group whose key first appears in `records` — a
+/// deterministic order tracked explicitly, not `HashMap` iteration order
+/// (which is randomized per-process and would otherwise make the result
+/// vary run-to-run on identical input). Good enough for the common case of
+/// one real split alignment per region; pathological inputs with multiple
+/// overlapping candidate chains aren't specially disambiguated beyond that.
 fn find_stitch_chain(
     records: &[PafRecord],
     desired_start: usize,
     desired_end: usize,
     max_gap: usize,
 ) -> Option<Vec<usize>> {
+    // HashMap iteration order is randomized per-process, so groups must be
+    // walked in a separately-tracked, deterministic order (first appearance
+    // in `records`) rather than however the map happens to enumerate them —
+    // otherwise which chain wins when more than one qualifies would vary
+    // run-to-run on the exact same input.
     let mut groups: std::collections::HashMap<(&str, char), Vec<usize>> =
         std::collections::HashMap::new();
+    let mut key_order: Vec<(&str, char)> = Vec::new();
     for (i, r) in records.iter().enumerate() {
-        groups
-            .entry((r.query_name.as_str(), r.strand))
-            .or_default()
-            .push(i);
+        let key = (r.query_name.as_str(), r.strand);
+        if !groups.contains_key(&key) {
+            key_order.push(key);
+        }
+        groups.entry(key).or_default().push(i);
     }
 
-    for idxs in groups.values_mut() {
+    for key in &key_order {
+        let idxs = groups
+            .get_mut(key)
+            .expect("key_order only holds keys already inserted into groups");
         idxs.sort_by_key(|&i| records[i].target_start);
 
         let mut run_start = 0usize;
@@ -1553,5 +1566,73 @@ mod tests {
 
         assert_eq!(reads.len(), 1);
         assert_eq!(reads[0].1, "q2");
+    }
+
+    // --- deterministic chain selection when multiple candidate chains qualify ---
+
+    #[test]
+    fn stitch_picks_the_chain_whose_key_appears_first_in_records_order() {
+        // Two independent, equally-valid 2-record chains (qA and qB) both
+        // cover the same window. Whichever's key appears first in the PAF
+        // (and therefore in `records`) must win, deterministically — not
+        // whichever HashMap grouping happens to iterate first.
+        let paf_contents = "qA\t70\t0\t20\t+\tchr1\t2000\t1000\t1020\t20\t20\t60\tcg:Z:5M5M5M5M\n\
+                             qA\t70\t50\t70\t+\tchr1\t2000\t1020\t1040\t20\t20\t60\tcg:Z:5M5M5M5M\n\
+                             qB\t70\t100\t120\t+\tchr1\t2000\t1000\t1020\t20\t20\t60\tcg:Z:5M5M5M5M\n\
+                             qB\t70\t150\t170\t+\tchr1\t2000\t1020\t1040\t20\t20\t60\tcg:Z:5M5M5M5M\n";
+        let fasta_contents = ">qA\nCCCCCCCCCCGGGGGGGGGGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAAAAAAAAAACCCCCCCCCC\n\
+                              >qB\nCCCCCCCCCCGGGGGGGGGGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAAAAAAAAAACCCCCCCCCC\n";
+        let (_paf_file, mut paf_reader, mut fasta_reader) =
+            setup_stitch_reader(paf_contents, fasta_contents);
+
+        let mut offset = 0u64;
+        let mut offsets = Vec::new();
+        for line in paf_contents.lines() {
+            offsets.push(offset);
+            offset += line.len() as u64 + 1;
+        }
+        let entries: Vec<PafIndexEntry> = offsets
+            .iter()
+            .map(|&o| PafIndexEntry {
+                offset: o,
+                target_start: 1000,
+                target_end: 1040,
+            })
+            .collect();
+        let entry_refs: Vec<&PafIndexEntry> = entries.iter().collect();
+
+        // qA's records come first in the PAF (and therefore in `records`),
+        // so qA's chain must win — deterministically, not by HashMap luck.
+        let reads = get_paf_reads(
+            &mut paf_reader,
+            &mut fasta_reader,
+            &entry_refs,
+            1010,
+            1030,
+            0,
+            0,
+            StitchConfig {
+                enabled: true,
+                max_gap: 100,
+            },
+            false,
+        )
+        .unwrap();
+
+        // qB's individual records still overlap the window (just not as the
+        // winning chain), so they still contribute their own ordinary partial
+        // fragments via the normal per-record loop — only the *stitched*
+        // (50bp, spanning the full insertion) result is the one whose winner
+        // this test cares about.
+        let stitched: Vec<_> = reads.iter().filter(|(seq, ..)| seq.len() == 50).collect();
+        assert_eq!(
+            stitched.len(),
+            1,
+            "expected exactly one stitched (50bp) result"
+        );
+        assert_eq!(
+            stitched[0].1, "qA",
+            "qA's chain appears first in records and must win deterministically"
+        );
     }
 }

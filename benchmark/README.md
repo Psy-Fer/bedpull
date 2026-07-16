@@ -410,6 +410,34 @@ alignment never captured in the first place, so their gains come purely
 from not throwing away information the chain already contains, not from a
 better or different underlying alignment.
 
+### Reproducing the full 6-tool comparison: `run_extra_tools.sh`
+
+The pslMap / `liftOver -multiple`+`liftOverMerge` / paftools.js / `bedpull
++stitch` commands shown above were originally run by hand, one-off, during
+the investigation — not reproducible from a single script, a gap flagged by
+an independent pre-release review. `run_extra_tools.sh` now wraps the exact
+commands used to produce every number in the Results sections below:
+
+```bash
+# stage: pslmap | liftover_multiple | bedpull_stitch | paftools | score | all
+./run_extra_tools.sh config.env main pslmap
+./run_extra_tools.sh config.env main liftover_multiple
+./run_extra_tools.sh config.env main bedpull_stitch
+./run_extra_tools.sh config.env main paftools     # ~15-25 min per haplotype, one-time alignment
+./run_extra_tools.sh config.env main score        # regenerates accuracy_report.md / accuracy_details.tsv
+
+./run_extra_tools.sh config.env confirmation all  # same five stages, hg38<->hs1 leg
+```
+
+`pslmap`/`liftover_multiple`/`bedpull_stitch` are cheap (seconds — they reuse
+the existing chain/PAF); only `paftools` needs a fresh whole-genome asm5
+alignment, and only for the main leg (the confirmation leg's reverse PAF is
+a one-time prerequisite already covered by that leg's own paftools.js
+section above, expected at `out/hg38/hg38_to_hs1.paf`). Requires the same
+`BEDTOPSL_BIN`/`PSLMAP_BIN`/`LIFTOVERMERGE_BIN`/`K8_BIN`/`PAFTOOLS_JS`
+prerequisites as the sections above, plus `LIFTOVER_BIN` (or `liftOver` on
+`PATH`) for the `liftover_multiple` stage.
+
 ## Running the scale leg
 
 ```bash

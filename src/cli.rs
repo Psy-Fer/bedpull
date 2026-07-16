@@ -19,60 +19,32 @@ use std::path::{Path, PathBuf};
         ]
 pub struct Opts {
     /// Aligned BAM file
-    #[clap(
-        short = 'b',
-        long = "bam",
-        parse(from_os_str),
-        default_value = "None",
-        display_order = 1
-    )]
+    #[clap(short = 'b', long = "bam", default_value = "None", display_order = 1)]
     pub bam: PathBuf,
 
     /// Aligned CRAM file (requires --reference for reference-compressed CRAMs)
-    #[clap(
-        long = "cram",
-        parse(from_os_str),
-        default_value = "None",
-        display_order = 1
-    )]
+    #[clap(long = "cram", default_value = "None", display_order = 1)]
     pub cram: PathBuf,
 
     /// Reference FASTA (required for CRAM decoding; used with --cram)
     #[clap(
         short = 'f',
         long = "reference",
-        parse(from_os_str),
         default_value = "None",
         display_order = 2
     )]
     pub reference: PathBuf,
 
     /// Bed file of targets
-    #[clap(
-        short = 'r',
-        long = "bed",
-        parse(from_os_str),
-        required = true,
-        display_order = 3
-    )]
+    #[clap(short = 'r', long = "bed", required = true, display_order = 3)]
     pub bed: PathBuf,
 
     /// paf file - ideally used for assembly to reference mapping
-    #[clap(
-        long = "paf",
-        parse(from_os_str),
-        default_value = "None",
-        display_order = 3
-    )]
+    #[clap(long = "paf", default_value = "None", display_order = 3)]
     pub paf: PathBuf,
 
     /// query reference file (used with paf for extracting sequence)
-    #[clap(
-        long = "query_ref",
-        parse(from_os_str),
-        default_value = "None",
-        display_order = 3
-    )]
+    #[clap(long = "query_ref", default_value = "None", display_order = 3)]
     pub query_ref: PathBuf,
 
     /// Output file path. Use '-' or omit to write to stdout.

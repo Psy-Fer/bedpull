@@ -8,9 +8,23 @@ select_sv_windows.py produces is a window we already know has a real SV, so
 a tool can never be observed producing a spurious result — there's nothing
 for it to be spurious *about*. This script generates windows we're
 confident do NOT contain a real SV (far from every SVTYPE-classified VCF
-record, inside the high-confidence regions), sized to match the real SVs'
-REF-span-implied window sizes one-for-one, so extraction difficulty is
-comparable between the positive and negative sets.
+record, inside the high-confidence regions), sized to match `abs(svlen)`
+one-for-one against the matching positive's truth.tsv row, so the two sets
+have comparable extracted-length scale.
+
+Note this matches on `svlen` (the SV's length itself), not literally the
+positive's own reference span: for a DEL those are approximately the same
+thing (REF span ≈ svlen), but for an INS the positive's own BED span is just
+a ~1bp anchor (see select_sv_windows.py) — svlen there is the *inserted*
+sequence length, which only shows up on the query/extracted side, not the
+reference span. Matching on svlen means an INS negative's plain window_len
+is set to roughly what that INS positive's *expected extracted length*
+would be (dominated by the insertion), which is the property that actually
+matters for "is this a comparably-sized extraction task" — but it does mean
+an INS negative window's reference span itself is not comparable to its
+positive's reference span. Doesn't bias precision (every tool sees the same
+negatives), but worth knowing before reading "size-matched" as "same
+reference footprint" for the INS case specifically.
 
 Expected behavior for a negative control is "extract exactly window_len" —
 same expected-length formula as the positive set, just with alt_len==ref_len

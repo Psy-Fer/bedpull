@@ -77,6 +77,28 @@ fn effective_flanks(opts: &Opts) -> (usize, usize) {
     cli::resolve_flanks(opts.flanks, opts.lflank, opts.rflank)
 }
 
+/// Recover a region's original 0-based `(start, end)` bounds.
+///
+/// `read_bed` stores both bounds shifted by `+1` to work around `Position`
+/// being `NonZeroUsize` (see its docs) — this is the one place that shift
+/// gets undone, via `usize::from(position) - 1`, for all three extraction
+/// modes.
+fn region_bounds(region: &noodles::core::Region, region_name: &str) -> Result<(usize, usize)> {
+    let region_start = region
+        .interval()
+        .start()
+        .map(usize::from)
+        .map(|v| v - 1)
+        .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded start", region_name))?;
+    let region_end = region
+        .interval()
+        .end()
+        .map(usize::from)
+        .map(|v| v - 1)
+        .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
+    Ok((region_start, region_end))
+}
+
 /// Build a header suffix describing bases missing from a `--partial` read whose
 /// alignment didn't fully span the requested (region ± flank) window, e.g.
 /// `|missing_left=12bp|missing_right=8bp`. Returns an empty string when the read
@@ -258,15 +280,7 @@ pub fn extract_from_bam(
             eprintln!("===============================");
         }
 
-        let region_start =
-            region.interval().start().map(usize::from).ok_or_else(|| {
-                anyhow::anyhow!("BED region '{}' has unbounded start", region_name)
-            })?;
-        let region_end = region
-            .interval()
-            .end()
-            .map(usize::from)
-            .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
+        let (region_start, region_end) = region_bounds(region, region_name)?;
 
         if region.name().contains(&b'#') {
             let reason = "region skipped (chromosome name contains '#')";
@@ -410,6 +424,18 @@ pub fn extract_from_cram(
             })?;
         fasta::Repository::new(FastaIndexedReader::new(indexed))
     } else {
+        // Whether this CRAM actually needs an external reference isn't
+        // reliably detectable up front without deeper container/codec
+        // inspection than noodles exposes here, so rather than guess, warn:
+        // a reference-compressed CRAM read without --reference won't error
+        // loudly, it'll just decode wrong (empty/garbled) sequence.
+        eprintln!(
+            "Warning: --cram given without --reference. If this CRAM was compressed \
+             against an external reference (the common case), sequences will decode \
+             incorrectly rather than error — pass --reference <fasta> if extracted \
+             sequences look empty or wrong. Only CRAMs with embedded sequences (see \
+             docs/src/cram-mode.md) can safely omit --reference."
+        );
         fasta::Repository::default()
     };
 
@@ -431,15 +457,7 @@ pub fn extract_from_cram(
             eprintln!("===============================");
         }
 
-        let region_start =
-            region.interval().start().map(usize::from).ok_or_else(|| {
-                anyhow::anyhow!("BED region '{}' has unbounded start", region_name)
-            })?;
-        let region_end = region
-            .interval()
-            .end()
-            .map(usize::from)
-            .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
+        let (region_start, region_end) = region_bounds(region, region_name)?;
 
         if region.name().contains(&b'#') {
             let reason = "region skipped (chromosome name contains '#')";
@@ -641,15 +659,7 @@ pub fn extract_from_paf(
             eprintln!("===============================");
         }
 
-        let region_start =
-            region.interval().start().map(usize::from).ok_or_else(|| {
-                anyhow::anyhow!("BED region '{}' has unbounded start", region_name)
-            })?;
-        let region_end = region
-            .interval()
-            .end()
-            .map(usize::from)
-            .ok_or_else(|| anyhow::anyhow!("BED region '{}' has unbounded end", region_name))?;
+        let (region_start, region_end) = region_bounds(region, region_name)?;
 
         if region.name().contains(&b'#') {
             let reason = "region skipped (chromosome name contains '#')";
@@ -802,6 +812,29 @@ mod tests {
     const RFC1_REGION_START: usize = 39318077; // BED start
     const RFC1_REGION_END: usize = 39318136; // BED end
     const RFC1_EXPECTED_BP: usize = 579;
+
+    #[test]
+    fn region_bounds_recovers_zero_start_without_erroring() {
+        // Regression test: BED start == 0 (the first base of a chromosome, an
+        // extremely common, valid coordinate) used to be forwarded straight
+        // into noodles' NonZeroUsize-backed Position, which can't represent
+        // 0 — read_bed errored, aborting the whole run. read_bed now stores
+        // both bounds shifted by +1; region_bounds must recover the exact
+        // original 0-based values, including 0 itself.
+        let dir = tempfile::tempdir().unwrap();
+        let bed_path = dir.path().join("zero_start.bed");
+        std::fs::write(&bed_path, "chr1\t0\t1000\tZERO_START\n").unwrap();
+
+        let regions = bedpull::utils::read_bed(&bed_path, false)
+            .expect("read_bed should not error on start=0");
+        assert_eq!(regions.len(), 1);
+        let (region, name, _chr) = &regions[0];
+        assert_eq!(name, "ZERO_START");
+
+        let (start, end) =
+            super::region_bounds(region, name).expect("region_bounds should recover bounds");
+        assert_eq!((start, end), (0, 1000));
+    }
 
     #[test]
     fn paf_index_build_finds_rfc1_region() {
