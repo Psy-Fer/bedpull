@@ -49,6 +49,8 @@ At least one input mode must be specified: `--bam`, `--cram`, or `--paf` + `--qu
 | `--rflank <N>` | — | `0` | all | Right-side flank in bp. Overrides `--flanks` for the right side when non-zero. |
 | `--hap_split` | — | false | BAM, CRAM, PAF | Split output by haplotype tag into `<output>.h0.<ext>`, `<output>.h1.<ext>`, `<output>.h2.<ext>`. BAM/CRAM use the `HP` aux tag; PAF uses the `hp:i:` optional field. Records without the tag go to `h0`. Requires a file `--output` (not stdout). |
 | `--use_paf_index` | — | `true` | PAF | Build and/or load a byte-offset index (`<paf>.idx`). Set to `false` to rebuild in memory every run without saving. |
+| `--stitch_records` | — | false | PAF | When no single PAF record fully spans a region, look for a chain of records sharing a query contig and strand, contiguous in target space, that together do — and extract one sequence across the whole chain. Recovers large structural variants (typically big novel insertions with no target homolog) that cause the aligner to split one alignment into two or more records instead of a single record with a large indel operation. Errors if combined with `--bam`/`--cram`. |
+| `--max_stitch_gap <N>` | — | `10000` | PAF | Maximum target-space gap in bp between consecutive records for `--stitch_records` to still treat them as part of the same split alignment. Bounds the target-side gap only — the reconstructed query-side splice (the insertion itself) can be much larger. |
 | `--debug` | — | false | all | Print verbose per-region/per-read diagnostic output: parsed CLI args, raw BED records, region banners, PAF overlap counts and per-alignment query coordinates. See [Diagnostics](#diagnostics). |
 
 ## Flank precedence

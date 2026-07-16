@@ -34,7 +34,9 @@ pub use cigar::{CigarOp, CigarOps, ToCigarOps};
 pub use paf::{
     PafIndex, PafIndexEntry, PafRecord, read_paf_record_at_offset, read_paf_record_from_reader,
 };
-pub use reads::{BamConfig, BamRead, PafRead, get_bam_reads, get_cram_reads, get_paf_reads};
+pub use reads::{
+    BamConfig, BamRead, PafRead, StitchConfig, get_bam_reads, get_cram_reads, get_paf_reads,
+};
 pub use utils::{
     ReadCuts, calculate_qscore, extract_from_fasta_coords, extract_from_fasta_coords_reader,
     get_read_cuts, read_bed, revcomp, write_fasta_record, write_fastq_record,

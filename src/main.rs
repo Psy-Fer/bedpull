@@ -2,7 +2,7 @@ mod cli;
 
 use anyhow::{Context, Result};
 use bedpull::paf::PafIndex;
-use bedpull::reads::{BamConfig, get_bam_reads, get_cram_reads, get_paf_reads};
+use bedpull::reads::{BamConfig, StitchConfig, get_bam_reads, get_cram_reads, get_paf_reads};
 use bedpull::utils::{read_bed, write_fasta_record, write_fastq_record};
 use clap::Parser;
 use noodles::bam;
@@ -628,6 +628,11 @@ pub fn extract_from_paf(
 
     let mut unmapped_writer = open_optional_writer(&opts.unmapped)?;
 
+    let stitch = StitchConfig {
+        enabled: opts.stitch_records,
+        max_gap: opts.max_stitch_gap,
+    };
+
     // for each region, get paf regions and extract sequences
     for (region, region_name, chr) in regions.iter() {
         if opts.debug {
@@ -678,6 +683,7 @@ pub fn extract_from_paf(
             region_end,
             lflank,
             rflank,
+            stitch,
             opts.debug,
         )?;
         if reads.is_empty() {

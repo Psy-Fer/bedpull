@@ -192,6 +192,60 @@ pub fn get_read_cuts(
     }
 }
 
+/// Walk a CIGAR to find the read-coordinate offset corresponding to a single
+/// reference position `ref_target`, or `None` if the alignment never reaches it.
+///
+/// This exists alongside [`get_read_cuts`] rather than reusing it because
+/// `get_read_cuts` tracks *two* boundaries at once and decides which slot
+/// (`read_start` vs `read_end`) to write into based on whether `read_start`
+/// has already been set — a convention that breaks down when only one
+/// boundary is needed and it happens to coincide with `align_start` (see
+/// `get_read_cuts`'s "Partial-overlap sentinel values" docs): the trigger for
+/// that boundary never independently fires, so the *other* boundary's
+/// crossing gets misattributed into the wrong field. Callers that only need
+/// one reference→read coordinate mapping (e.g. stitching a window's two
+/// edges across different PAF records) should use this instead.
+///
+/// `ref_target <= align_start` returns `Some(0)` (at or before the alignment
+/// begins). A reference position falling inside a deletion maps to the read
+/// position immediately after the last matched base before it, since a
+/// deletion consumes no read bases.
+pub fn read_pos_at_ref(
+    cigar_ops: &CigarOps,
+    align_start: usize,
+    ref_target: usize,
+) -> Option<usize> {
+    if ref_target <= align_start {
+        return Some(0);
+    }
+
+    let mut pos: usize = 0;
+    let mut ref_pos: usize = align_start;
+
+    for op in cigar_ops {
+        match op.kind {
+            Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                if ref_pos + op.len >= ref_target {
+                    return Some(pos + (ref_target - ref_pos));
+                }
+                ref_pos += op.len;
+                pos += op.len;
+            }
+            Kind::Insertion | Kind::SoftClip => {
+                pos += op.len;
+            }
+            Kind::Deletion | Kind::Skip => {
+                if ref_pos + op.len >= ref_target {
+                    return Some(pos);
+                }
+                ref_pos += op.len;
+            }
+            Kind::HardClip | Kind::Pad => continue,
+        }
+    }
+    None
+}
+
 /// Parse a BED file and return a list of `(region, name, chromosome)` triples.
 ///
 /// Reads 3- or 4-column BED format via [`crate::bed::BedReader`]. The
@@ -648,6 +702,63 @@ mod tests {
         let c = cuts("5M", 1, 3, 10);
         assert_eq!(c.read_start, 2);
         assert_eq!(c.read_end, 0);
+    }
+
+    // --- read_pos_at_ref ---
+
+    fn pos_at(cigar: &str, align_start: usize, ref_target: usize) -> Option<usize> {
+        let ops = cigar.to_cigar_ops().unwrap();
+        read_pos_at_ref(&ops, align_start, ref_target)
+    }
+
+    #[test]
+    fn read_pos_at_ref_mid_match() {
+        assert_eq!(pos_at("20M", 1000, 1010), Some(10));
+    }
+
+    #[test]
+    fn read_pos_at_ref_matches_the_alignment_own_start() {
+        // The exact scenario get_read_cuts can't handle in one call (see its
+        // "Partial-overlap sentinel values" docs) — region_start == align_start.
+        assert_eq!(pos_at("20M", 1000, 1000), Some(0));
+    }
+
+    #[test]
+    fn read_pos_at_ref_matches_the_alignment_own_end() {
+        assert_eq!(pos_at("20M", 1000, 1020), Some(20));
+    }
+
+    #[test]
+    fn read_pos_at_ref_before_alignment_start_is_zero() {
+        assert_eq!(pos_at("20M", 1000, 990), Some(0));
+    }
+
+    #[test]
+    fn read_pos_at_ref_past_alignment_end_is_none() {
+        assert_eq!(pos_at("20M", 1000, 1025), None);
+    }
+
+    #[test]
+    fn read_pos_at_ref_across_multiple_ops() {
+        // 5M 3I 5M: an insertion between two match blocks advances read
+        // position without advancing reference position.
+        assert_eq!(pos_at("5M3I5M", 1000, 1000), Some(0));
+        assert_eq!(pos_at("5M3I5M", 1000, 1005), Some(5));
+        // Position 1006 is past the insertion (which doesn't consume ref),
+        // 1 base into the second match block, plus the 3 inserted bases.
+        assert_eq!(pos_at("5M3I5M", 1000, 1006), Some(9));
+        assert_eq!(pos_at("5M3I5M", 1000, 1010), Some(13));
+    }
+
+    #[test]
+    fn read_pos_at_ref_inside_deletion_maps_to_position_before_it() {
+        // 5M 4D 5M: a reference position inside the deletion has no read
+        // counterpart, so it maps to the read position right after the last
+        // matched base before the deletion (5, same as ref position 1005).
+        assert_eq!(pos_at("5M4D5M", 1000, 1007), Some(5));
+        assert_eq!(pos_at("5M4D5M", 1000, 1005), Some(5));
+        assert_eq!(pos_at("5M4D5M", 1000, 1009), Some(5));
+        assert_eq!(pos_at("5M4D5M", 1000, 1010), Some(6));
     }
 
     // --- extract_from_fasta_coords: 0-based half-open coordinate contract ---

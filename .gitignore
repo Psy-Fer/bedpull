@@ -29,3 +29,10 @@ TODO.md
 /fail*
 *.bam
 /docs/book/
+*.paf.idx
+
+# Benchmark harness: local config (absolute paths, machine-specific) and
+# generated output/cache are not checked in — only the scripts/templates are.
+/benchmark/config.env
+/benchmark/out/
+/benchmark/__pycache__/

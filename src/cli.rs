@@ -140,6 +140,19 @@ pub struct Opts {
     #[clap(long = "rflank", default_value = "0", display_order = 9)]
     pub rflank: usize,
 
+    /// Attempt to stitch a region across multiple chained PAF records when no single
+    /// record fully spans it (PAF mode only) — recovers cases where a large structural
+    /// variant caused the aligner to split one alignment into two or more records
+    /// instead of a single record with a large indel operation
+    #[clap(long = "stitch_records", display_order = 9)]
+    pub stitch_records: bool,
+
+    /// Maximum target-space gap in bp between consecutive records for --stitch_records
+    /// to still treat them as part of the same split alignment (PAF mode only, requires
+    /// --stitch_records)
+    #[clap(long = "max_stitch_gap", default_value = "10000", display_order = 9)]
+    pub max_stitch_gap: usize,
+
     /// Print verbose per-region/per-read diagnostic output (parsed args, BED records, region banners, query coordinates)
     #[clap(long = "debug", display_order = 13)]
     pub debug: bool,
@@ -373,6 +386,9 @@ pub fn check_option_values(opts: &Opts) -> Result<()> {
     if opts.partial && !has_bam && !has_cram {
         bail!("--partial requires --bam or --cram (not yet supported in PAF mode)");
     }
+    if opts.stitch_records && !has_paf {
+        bail!("--stitch_records requires --paf + --query_ref (not applicable to BAM/CRAM mode)");
+    }
     if opts.min_partial_coverage > 0.0 && !opts.partial {
         bail!(
             "--min_partial_coverage requires --partial (no-op otherwise: non-partial reads always cover the full requested window)"
@@ -506,6 +522,8 @@ mod tests {
             min_region_quality: 0.0,
             hap_split: false,
             dedup: false,
+            stitch_records: false,
+            max_stitch_gap: 10_000,
             debug: false,
         }
     }
@@ -610,6 +628,20 @@ mod tests {
     fn partial_in_bam_mode_is_ok() {
         let mut o = make_opts(false, "reads.bam");
         o.partial = true;
+        assert!(check_option_values(&o).is_ok());
+    }
+
+    #[test]
+    fn stitch_records_in_bam_mode_is_error() {
+        let mut o = make_opts(false, "reads.bam");
+        o.stitch_records = true;
+        assert!(check_option_values(&o).is_err());
+    }
+
+    #[test]
+    fn stitch_records_in_paf_mode_is_ok() {
+        let mut o = make_opts_paf("aln.paf", "asm.fa");
+        o.stitch_records = true;
         assert!(check_option_values(&o).is_ok());
     }
 

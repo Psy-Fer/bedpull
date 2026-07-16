@@ -156,12 +156,40 @@ These warnings are always printed. A per-alignment `Query coords: contig:start-e
 line is also available but only shown with `--debug` (see below), since it's noisy for PAF
 files with many overlapping alignments.
 
+## Cross-record stitching
+
+A single PAF record only ever covers a contiguous block of one alignment. A large structural
+variant — most often a big novel insertion with no homologous target sequence — frequently
+causes the aligner to emit *two or more separate, chained records* instead of one record with a
+large indel operation. Without help, a BED region spanning that boundary is only ever partially
+extracted from whichever single record happens to overlap it (or produces two separate partial
+hits, one per record).
+
+`--stitch_records` looks for a chain of records that share a query contig and strand, are
+contiguous in target space (within `--max_stitch_gap` bp), and together span the requested
+region — then extracts one sequence across the whole chain in a single slice, rather than
+walking each record's CIGAR separately. Any "gap" in query space between chain members (the
+inserted sequence itself, which has no aligned counterpart in either record) is spliced in
+directly from the raw query FASTA, since that gap *is* the structural variant the aligner split
+around.
+
+```bash
+bedpull --paf assembly.paf --query_ref assembly.fa --bed regions.bed \
+    --stitch_records --max_stitch_gap 10000 --output output.fasta
+```
+
+`--max_stitch_gap` (default `10000`) bounds only the *target*-side gap between consecutive
+chain members — the reconstructed query-side splice (the insertion itself) can be much larger
+and isn't separately bounded. Off by default; when a single record already fully covers a
+region, stitching is skipped even if enabled, since there's nothing to bridge.
+
 ## Diagnostics
 
 By default bedpull only prints index-build/load status, the mode banner, and a completion
 line. Pass `--debug` to see verbose per-region diagnostics: the parsed CLI args, each BED record
 as it's read, a banner for every region as it's processed, the overlapping-alignment count per
-region, and per-alignment query coordinates.
+region, and per-alignment query coordinates. With `--stitch_records`, a successful stitch also
+prints `Stitched N chained record(s): contig:start-end (strand X)`.
 
 ## Example: extracting RFC1 from a paternal assembly
 
