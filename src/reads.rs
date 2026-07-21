@@ -251,14 +251,11 @@ where
         return Ok(None);
     };
 
-    // Deliberately not get_read_cuts: it tracks two boundaries per call and
-    // decides which slot to write into based on whether the first has
-    // already fired, a convention that breaks when a boundary coincides
-    // exactly with a record's own align_start (see read_pos_at_ref's docs).
-    // That's not a hypothetical here — desired_start legitimately does equal
-    // first.target_start whenever the window's left edge lines up exactly
-    // with the first chain member's own start (same for desired_end and
-    // last.target_end), so each boundary is resolved independently instead.
+    // Deliberately not get_read_cuts: the two window edges live on *different*
+    // chained records here (desired_start on the first record's CIGAR,
+    // desired_end on the last's), so each is resolved independently with
+    // read_pos_at_ref. get_read_cuts models a single alignment's two boundaries
+    // and doesn't fit a boundary-per-record split.
     let (Some(read_pos_first), Some(read_pos_last)) = (
         read_pos_at_ref(&first_ops, first.target_start, desired_start),
         read_pos_at_ref(&last_ops, last.target_start, desired_end),
@@ -336,50 +333,36 @@ where
 }
 
 /// Resolve the final `(read_start, read_end, ref_start, ref_end)` for a read from
-/// its raw [`ReadCuts`], applying partial-overlap fallback rules.
+/// its raw [`ReadCuts`].
 ///
-/// `get_read_cuts` fires on `ref_pos == region_start` and `ref_pos == region_end`. When
-/// the alignment starts after `region_start`, the `region_start` trigger never fires;
-/// `read_cuts.ref_start`/`read_cuts.read_start` end up holding the `region_end` position
-/// instead (see [`get_read_cuts`][crate::utils::get_read_cuts] docs), and `read_end`/`ref_end`
-/// stay `0`. This function undoes that mislabelling so callers get the reference span
-/// actually covered by the returned slice, not the raw (and sometimes swapped) fields.
-/// Returns `None` when the read doesn't satisfy the region and `config.partial` is `false`
-/// (the read should be skipped).
+/// [`get_read_cuts`][crate::utils::get_read_cuts] now clamps the fire-on boundaries
+/// to the alignment span itself, so `read_start`/`read_end` are already correct read
+/// offsets and `ref_start`/`ref_end` already report the covered sub-span — no
+/// sentinel un-swapping is needed. This function is left as the one place the
+/// spanning/partial *policy* is applied:
+///
+/// - `read_end == 0` means the alignment never reached the window at all → skip.
+/// - `spans` is `true` when the alignment covers the whole requested region
+///   (`align_start <= region_start && align_end >= region_end`). In non-partial
+///   mode a read that does not fully span the region is skipped; in partial mode
+///   any real overlap is accepted and the covered sub-span is returned.
 fn resolve_cuts(
     read_cuts: &ReadCuts,
     config: &BamConfig,
-    align_start: usize,
-    align_end: usize,
-    region_start: usize,
-    seq_len: usize,
+    spans: bool,
 ) -> Option<(usize, usize, usize, usize)> {
-    if config.partial && align_start > region_start {
-        let (read_end, ref_end) = if read_cuts.read_start > 0 {
-            (read_cuts.read_start, read_cuts.ref_start)
-        } else {
-            (seq_len, align_end)
-        };
-        Some((0, read_end, align_start, ref_end))
-    } else if read_cuts.read_end == 0 {
-        if config.partial {
-            Some((
-                read_cuts.read_start,
-                seq_len,
-                read_cuts.ref_start,
-                align_end,
-            ))
-        } else {
-            None
-        }
-    } else {
-        Some((
-            read_cuts.read_start,
-            read_cuts.read_end,
-            read_cuts.ref_start,
-            read_cuts.ref_end,
-        ))
+    if read_cuts.read_end == 0 {
+        return None;
     }
+    if !config.partial && !spans {
+        return None;
+    }
+    Some((
+        read_cuts.read_start,
+        read_cuts.read_end,
+        read_cuts.ref_start,
+        read_cuts.ref_end,
+    ))
 }
 
 /// Returns `false` if a read's actual reference coverage (`ref_start..ref_end`) falls short of
@@ -518,22 +501,21 @@ where
             continue;
         }
 
-        // Clamp the desired window to this read's alignment span so get_read_cuts stays in bounds.
-        let (eff_start, eff_end) = if lflank == 0 && rflank == 0 {
-            (region_start, region_end)
-        } else {
-            (desired_start.max(align_start), desired_end.min(align_end))
-        };
+        // noodles alignment_end() is the inclusive last aligned position; get_read_cuts
+        // wants the exclusive one-past-end boundary, in the same frame as region_end.
+        let align_end_excl = align_end + 1;
 
-        let read_cuts: ReadCuts = get_read_cuts(&cigar, align_start, eff_start, eff_end);
-        let Some((read_start, read_end, ref_start, ref_end)) = resolve_cuts(
-            &read_cuts,
-            config,
-            align_start,
-            align_end,
-            region_start,
-            i_seq.len(),
-        ) else {
+        // get_read_cuts clamps its fire-on boundaries to [align_start, align_end_excl]
+        // internally, so the desired (flank-expanded) window is passed straight through.
+        let read_cuts: ReadCuts =
+            get_read_cuts(&cigar, align_start, align_end_excl, desired_start, desired_end);
+        // Spanning is judged against the requested region (not the flank window): a read
+        // must cover region_start..region_end to count as full-length; flanks are captured
+        // opportunistically when the alignment reaches into them.
+        let spans = align_start <= region_start && align_end_excl >= region_end;
+        let Some((read_start, read_end, ref_start, ref_end)) =
+            resolve_cuts(&read_cuts, config, spans)
+        else {
             continue;
         };
         if !passes_min_partial_coverage(config, desired_start, desired_end, ref_start, ref_end) {
@@ -645,21 +627,15 @@ pub fn get_cram_reads(
             continue;
         }
 
-        let (eff_start, eff_end) = if lflank == 0 && rflank == 0 {
-            (region_start, region_end)
-        } else {
-            (desired_start.max(align_start), desired_end.min(align_end))
-        };
+        // noodles alignment_end() is inclusive; get_read_cuts wants one-past-end.
+        let align_end_excl = align_end + 1;
 
-        let read_cuts = get_read_cuts(&cigar, align_start, eff_start, eff_end);
-        let Some((read_start, read_end, ref_start, ref_end)) = resolve_cuts(
-            &read_cuts,
-            config,
-            align_start,
-            align_end,
-            region_start,
-            i_seq.len(),
-        ) else {
+        let read_cuts =
+            get_read_cuts(&cigar, align_start, align_end_excl, desired_start, desired_end);
+        let spans = align_start <= region_start && align_end_excl >= region_end;
+        let Some((read_start, read_end, ref_start, ref_end)) =
+            resolve_cuts(&read_cuts, config, spans)
+        else {
             continue;
         };
         if !passes_min_partial_coverage(config, desired_start, desired_end, ref_start, ref_end) {
@@ -802,15 +778,12 @@ where
             }
         };
 
-        // Deliberately read_pos_at_ref, not get_read_cuts: get_read_cuts tracks
-        // two boundaries per call and decides which slot to write into based on
-        // whether read_start has already fired — a convention that misattributes
-        // the crossing whenever a boundary coincides exactly with this record's
-        // own align_start (see read_pos_at_ref's docs). That's not an edge case
-        // in practice: eff_start clamps to paf_record.target_start (i.e. equals
-        // align_start exactly) for every record whose window extends past its
-        // left edge, so this used to silently discard a large share of otherwise
-        // valid partial overlaps as "invalid coordinates".
+        // read_pos_at_ref resolves each window edge to a query offset independently,
+        // which is what the PAF path wants: it handles the strand flip and zero-length
+        // (fully-inside-a-deletion) cases below by comparing the two offsets directly,
+        // and eff_start routinely equals paf_record.target_start exactly (any record
+        // whose window extends past its own left edge), which single-boundary mapping
+        // handles cleanly.
         let (Some(read_start), Some(read_end)) = (
             read_pos_at_ref(&cigar_ops, paf_record.target_start, eff_start),
             read_pos_at_ref(&cigar_ops, paf_record.target_start, eff_end),
@@ -934,71 +907,52 @@ mod tests {
         }
     }
 
+    fn cuts_of(read_start: usize, read_end: usize, ref_start: usize, ref_end: usize) -> ReadCuts {
+        ReadCuts {
+            read_start,
+            read_end,
+            ref_start,
+            ref_end,
+            softclip_lead_start: read_start,
+            softclip_trail_end: read_end,
+        }
+    }
+
     #[test]
-    fn resolve_cuts_full_span_returns_read_cuts_unchanged() {
-        let read_cuts = ReadCuts {
-            read_start: 10,
-            read_end: 50,
-            ref_start: 100,
-            ref_end: 140,
-        };
-        let resolved = resolve_cuts(&read_cuts, &BamConfig::default(), 90, 200, 100, 300);
+    fn resolve_cuts_spanning_returns_read_cuts_unchanged() {
+        // get_read_cuts already produced correct, clamped offsets — a spanning read
+        // passes straight through in either mode.
+        let read_cuts = cuts_of(10, 50, 100, 140);
+        let resolved = resolve_cuts(&read_cuts, &BamConfig::default(), true);
         assert_eq!(resolved, Some((10, 50, 100, 140)));
     }
 
     #[test]
-    fn resolve_cuts_non_partial_incomplete_overlap_is_skipped() {
-        // align_start == region_start (not left-partial) but read_end == 0 (never reached
-        // region_end) and partial is off: the read should be skipped entirely.
-        let read_cuts = ReadCuts {
-            read_start: 10,
-            read_end: 0,
-            ref_start: 100,
-            ref_end: 0,
-        };
-        let resolved = resolve_cuts(&read_cuts, &BamConfig::default(), 100, 130, 100, 300);
-        assert_eq!(resolved, None);
+    fn resolve_cuts_no_overlap_is_skipped_even_in_partial_mode() {
+        // read_end == 0 is the "alignment never reached the window" sentinel: nothing to
+        // extract, so it's skipped regardless of partial mode.
+        let read_cuts = cuts_of(10, 0, 100, 0);
+        assert_eq!(resolve_cuts(&read_cuts, &BamConfig::default(), false), None);
+        assert_eq!(resolve_cuts(&read_cuts, &partial_config(), false), None);
     }
 
     #[test]
-    fn resolve_cuts_right_partial_takes_rest_of_read() {
-        // Alignment starts at region_start but ends before region_end: right-partial.
-        let read_cuts = ReadCuts {
-            read_start: 10,
-            read_end: 0,
-            ref_start: 100,
-            ref_end: 0,
-        };
-        let resolved = resolve_cuts(&read_cuts, &partial_config(), 100, 130, 100, 300);
-        // ref_end falls back to align_end (130) since the region end was never reached.
-        assert_eq!(resolved, Some((10, 300, 100, 130)));
+    fn resolve_cuts_non_partial_non_spanning_is_skipped() {
+        // A real overlap (read_end != 0) that doesn't fully span the region is dropped in
+        // non-partial mode.
+        let read_cuts = cuts_of(0, 40, 110, 150);
+        assert_eq!(resolve_cuts(&read_cuts, &BamConfig::default(), false), None);
     }
 
     #[test]
-    fn resolve_cuts_left_partial_starts_from_zero() {
-        // Alignment starts after region_start: left-partial. get_read_cuts stores the
-        // region_end position in read_start/ref_start (see its docs).
-        let read_cuts = ReadCuts {
-            read_start: 40,
-            read_end: 0,
-            ref_start: 140,
-            ref_end: 0,
-        };
-        let resolved = resolve_cuts(&read_cuts, &partial_config(), 110, 200, 100, 300);
-        assert_eq!(resolved, Some((0, 40, 110, 140)));
-    }
-
-    #[test]
-    fn resolve_cuts_left_partial_never_reaches_region_end() {
-        // Left-partial and the read also ends before region_end is reached at all.
-        let read_cuts = ReadCuts {
-            read_start: 0,
-            read_end: 0,
-            ref_start: 0,
-            ref_end: 0,
-        };
-        let resolved = resolve_cuts(&read_cuts, &partial_config(), 110, 150, 100, 300);
-        assert_eq!(resolved, Some((0, 300, 110, 150)));
+    fn resolve_cuts_partial_non_spanning_returns_covered_subspan() {
+        // Same overlap, partial mode: the covered sub-span (already clamped by
+        // get_read_cuts) is returned as-is.
+        let read_cuts = cuts_of(0, 40, 110, 150);
+        assert_eq!(
+            resolve_cuts(&read_cuts, &partial_config(), false),
+            Some((0, 40, 110, 150))
+        );
     }
 
     // --- passes_min_partial_coverage ---
