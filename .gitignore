@@ -30,6 +30,7 @@ TODO.md
 *.bam
 /docs/book/
 *.paf.idx
+bedpull_wishlist.md
 
 # Benchmark harness: local config (absolute paths, machine-specific) and
 # generated output/cache are not checked in — only the scripts/templates are.
