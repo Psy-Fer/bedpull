@@ -37,21 +37,40 @@ pub fn calculate_qscore(qstring: &str) -> f64 {
 ///
 /// All positions are 0-based indices into the read sequence array. `ref_start` /
 /// `ref_end` are the actual reference positions reached during the CIGAR walk and
-/// may differ slightly from the requested BED coordinates when a region boundary
-/// falls inside a deletion or at the very end of a CIGAR op.
+/// may differ from the requested window coordinates when a region boundary falls
+/// inside a deletion, at the very end of a CIGAR op, or when the alignment only
+/// partially overlaps the window (in which case they are clamped to the span the
+/// alignment actually covers — `max(region_start, align_start)` /
+/// `min(region_end, align_end)`).
+///
+/// This layout is intentionally field-identical to bladerunner's `ReadCuts` so the
+/// two can share a single implementation across the crate boundary.
 #[derive(Debug, Clone)]
 pub struct ReadCuts {
-    /// Index of the first read base that corresponds to `region_start` in the
-    /// reference. Use as the start of a slice into the read sequence: `seq[read_start..read_end]`.
+    /// Index of the first read base of the extraction. Use as the start of a slice
+    /// into the read sequence: `seq[read_start..read_end]`.
     pub read_start: usize,
-    /// Index one past the last read base that corresponds to `region_end`.
-    /// A value of `0` is a sentinel meaning the region end was never reached
-    /// (right-partial overlap or no overlap at all).
+    /// Index one past the last read base of the extraction.
+    /// A value of `0` is a sentinel meaning no valid extraction was found — the
+    /// alignment never reached the window (no overlap at all). Because the start
+    /// side now uses an explicit `found_start` flag internally (not a `start > 0`
+    /// sentinel), a real extraction never ends at `0`, so this sentinel is
+    /// unambiguous.
     pub read_end: usize,
     /// The reference position at which `read_start` was set during the CIGAR walk.
     pub ref_start: usize,
     /// The reference position at which `read_end` was set during the CIGAR walk.
     pub ref_end: usize,
+    /// Read position where a leading soft-clip begins. Equal to `read_start` when no
+    /// leading extension is available. A value less than `read_start` means the caller
+    /// can prepend `seq[softclip_lead_start..read_start]` to capture expansion bases
+    /// that were soft-clipped before the alignment (and thus before the window) start.
+    pub softclip_lead_start: usize,
+    /// Read position one-past-the-end of a trailing soft-clip. Equal to `read_end` when
+    /// no trailing extension is available. A value greater than `read_end` means the
+    /// caller can append `seq[read_end..softclip_trail_end]` to capture expansion bases
+    /// that were soft-clipped past the alignment (and thus past the window) end.
+    pub softclip_trail_end: usize,
 }
 
 /// Walk a CIGAR string to find the read-coordinate slice for a reference region.
@@ -68,73 +87,113 @@ pub struct ReadCuts {
 ///
 /// ## Coordinate convention (critical)
 ///
-/// `align_start` is **1-based** (as returned by noodles from a BAM record or
-/// read from a PAF `target_start` field after adjustment). `region_start` and
-/// `region_end` are **0-based** (directly from the BED file). This mixed
-/// convention is intentional: it matches the existing behaviour that the tests
-/// are written against. Do not normalise both to the same base — it will shift
-/// every boundary by one.
+/// `align_start` / `align_end` and `region_start` / `region_end` must all be in
+/// the **same** coordinate frame. The walk is relative — `ref_pos` starts at
+/// `align_start` and advances — so only the *difference* between the boundaries
+/// matters for the returned read offsets; the returned `ref_start` / `ref_end`
+/// inherit whatever frame the inputs were in. In BAM/CRAM mode both come from
+/// noodles' 1-based positions; in the unit tests both use a small self-consistent
+/// frame. Do not mix a 1-based `align_start` with a 0-based `region_start` — it
+/// shifts every boundary by one.
 ///
-/// ## Partial-overlap sentinel values
+/// ## Partial overlap and the `align_end` clamp
 ///
-/// When the alignment starts after `region_start` (left-partial or contained
-/// read), the `region_start` trigger never fires. If `region_end` is
-/// subsequently reached, the position is stored in `read_start` (because
-/// `start == 0`), and `read_end` remains `0`. [`get_bam_reads`][crate::reads::get_bam_reads]
-/// detects this pattern when `partial` mode is enabled and interprets the
-/// fields accordingly.
+/// `region_start` / `region_end` are the *desired* extraction window (already
+/// expanded by any flanks/padding the caller wants). The effective boundaries the
+/// walk actually fires on are clamped to the span this alignment covers:
+/// `ref_start = max(region_start, align_start)` and
+/// `ref_end = min(region_end, align_end)`. So a read that only partially overlaps
+/// the window still yields a real, in-bounds slice (its `ref_start` / `ref_end`
+/// report the covered sub-span) rather than a `read_end == 0` sentinel. The
+/// sentinel now only means "no overlap at all".
+///
+/// The start boundary uses an explicit `found_start` flag rather than a
+/// `start > 0` sentinel, and is recorded at op entry when `ref_pos == ref_start`
+/// (e.g. when the alignment begins exactly at the window start, or right after a
+/// leading soft-clip). This is what makes `read_start == 0` a legitimate result
+/// instead of being conflated with "start not yet found".
 ///
 /// # Parameters
 ///
 /// - `cigar_ops` — the decoded CIGAR for this alignment.
-/// - `align_start` — 1-based reference position where the alignment begins
-///   (from the BAM `alignment_start` field or the PAF `target_start` field).
-/// - `region_start` — 0-based start of the BED region to extract.
-/// - `region_end` — 0-based end of the BED region to extract (exclusive in BED
-///   convention, but the CIGAR walk treats it as the last position to fire on).
+/// - `align_start` — reference position where the alignment begins.
+/// - `align_end` — reference position where the alignment ends (one past the last
+///   ref-consuming base), in the same frame as `align_start`.
+/// - `region_start` — start of the desired extraction window.
+/// - `region_end` — end of the desired extraction window.
 pub fn get_read_cuts(
     cigar_ops: &CigarOps,
     align_start: usize,
+    align_end: usize,
     region_start: usize,
     region_end: usize,
 ) -> ReadCuts {
-    let mut start: usize = 0;
+    let mut start: usize = 0; // read position of the extraction start
+    let mut found_start: bool = false; // true once start has been determined
     let mut end: usize = 0;
     let mut r_start: usize = 0;
     let mut r_end: usize = 0;
     let mut pos: usize = 0;
     let mut ref_pos: usize = align_start;
 
-    let ref_start = region_start;
-    let ref_end = region_end;
+    // The desired window; kept separately from the clamped boundaries below so the
+    // soft-clip guards can tell "alignment starts inside the window" apart from
+    // "window edge".
+    let pad_ref_start = region_start;
+    let pad_ref_end = region_end;
+
+    // Clamp the fire-on boundaries to the span this alignment actually covers.
+    let ref_start = if align_start <= pad_ref_start {
+        pad_ref_start
+    } else {
+        align_start
+    };
+    let ref_end = if align_end >= pad_ref_end {
+        pad_ref_end
+    } else {
+        align_end
+    };
 
     for op in cigar_ops {
         match op.kind {
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                // Record the start now, before advancing, if the alignment begins
+                // exactly at ref_start (e.g. after leading soft-clips, or when the
+                // read starts inside the window). Otherwise the inner loop would
+                // step ref_pos past ref_start on its first increment and miss it.
+                if !found_start && ref_pos == ref_start {
+                    start = pos;
+                    r_start = ref_pos;
+                    found_start = true;
+                }
                 if (ref_pos + op.len >= ref_start) || (ref_pos + op.len >= ref_end) {
-                    if (ref_pos + op.len == ref_start) || (ref_pos + op.len == ref_end) {
+                    if !found_start && ref_pos + op.len == ref_start {
+                        // Op ends exactly at ref_start: advance entirely, record start.
                         ref_pos += op.len;
                         pos += op.len;
-                        if start > 0 {
-                            end = pos;
-                            r_end = ref_pos;
-                            break;
-                        } else {
-                            start = pos;
-                            r_start = ref_pos;
-                        }
+                        start = pos;
+                        r_start = ref_pos;
+                        found_start = true;
+                    } else if found_start && ref_pos + op.len == ref_end {
+                        // Op ends exactly at ref_end and start already found: record end, stop.
+                        ref_pos += op.len;
+                        pos += op.len;
+                        end = pos;
+                        r_end = ref_pos;
+                        break;
                     } else {
                         for _ in 0..op.len {
                             ref_pos += 1;
                             pos += 1;
                             if (ref_pos == ref_start) || (ref_pos == ref_end) {
-                                if start > 0 {
+                                if found_start {
                                     end = pos;
                                     r_end = ref_pos;
                                     break;
                                 } else {
                                     start = pos;
                                     r_start = ref_pos;
+                                    found_start = true;
                                 }
                             }
                         }
@@ -146,30 +205,39 @@ pub fn get_read_cuts(
             }
             Kind::Insertion | Kind::SoftClip => {
                 pos += op.len;
+                // After a soft-clip, ref_pos hasn't advanced. If the read begins
+                // inside the window (ref_start == align_start), the extraction
+                // starts here — after the clipped bases.
+                if !found_start && ref_pos == ref_start {
+                    start = pos;
+                    r_start = ref_pos;
+                    found_start = true;
+                }
             }
             Kind::Deletion | Kind::Skip => {
                 if (ref_pos + op.len >= ref_start) || (ref_pos + op.len >= ref_end) {
-                    if (ref_pos + op.len == ref_start) || (ref_pos + op.len == ref_end) {
+                    if !found_start && ref_pos + op.len == ref_start {
                         ref_pos += op.len;
-                        if start > 0 {
-                            end = pos;
-                            r_end = ref_pos;
-                            break;
-                        } else {
-                            start = pos;
-                            r_start = ref_pos;
-                        }
+                        start = pos;
+                        r_start = ref_pos;
+                        found_start = true;
+                    } else if found_start && ref_pos + op.len == ref_end {
+                        ref_pos += op.len;
+                        end = pos;
+                        r_end = ref_pos;
+                        break;
                     } else {
                         for _ in 0..op.len {
                             ref_pos += 1;
                             if (ref_pos == ref_start) || (ref_pos == ref_end) {
-                                if start > 0 {
+                                if found_start {
                                     end = pos;
                                     r_end = ref_pos;
                                     break;
                                 } else {
                                     start = pos;
                                     r_start = ref_pos;
+                                    found_start = true;
                                 }
                             }
                         }
@@ -184,27 +252,49 @@ pub fn get_read_cuts(
         }
     }
 
+    // A leading soft-clip carries expansion sequence to the left of the alignment
+    // start (which itself is past the window start). Only meaningful once an
+    // extraction start was actually found.
+    let softclip_lead_start = if align_start > pad_ref_start && found_start {
+        match cigar_ops.first() {
+            Some(op) if op.kind == Kind::SoftClip => start.saturating_sub(op.len),
+            _ => start,
+        }
+    } else {
+        start
+    };
+
+    // A trailing soft-clip carries expansion sequence to the right of the alignment
+    // end (which itself is before the window end). Guard on end > 0 (extraction was
+    // found) and r_end < pad_ref_end (alignment terminated before the window end).
+    let softclip_trail_end = if end > 0 && r_end < pad_ref_end {
+        match cigar_ops.last() {
+            Some(op) if op.kind == Kind::SoftClip => end + op.len,
+            _ => end,
+        }
+    } else {
+        end
+    };
+
     ReadCuts {
         read_start: start,
         read_end: end,
         ref_start: r_start,
         ref_end: r_end,
+        softclip_lead_start,
+        softclip_trail_end,
     }
 }
 
 /// Walk a CIGAR to find the read-coordinate offset corresponding to a single
 /// reference position `ref_target`, or `None` if the alignment never reaches it.
 ///
-/// This exists alongside [`get_read_cuts`] rather than reusing it because
-/// `get_read_cuts` tracks *two* boundaries at once and decides which slot
-/// (`read_start` vs `read_end`) to write into based on whether `read_start`
-/// has already been set — a convention that breaks down when only one
-/// boundary is needed and it happens to coincide with `align_start` (see
-/// `get_read_cuts`'s "Partial-overlap sentinel values" docs): the trigger for
-/// that boundary never independently fires, so the *other* boundary's
-/// crossing gets misattributed into the wrong field. Callers that only need
-/// one reference→read coordinate mapping (e.g. stitching a window's two
-/// edges across different PAF records) should use this instead.
+/// This exists alongside [`get_read_cuts`] for callers that only need to map a
+/// *single* reference position to a read offset, rather than the two-boundary
+/// slice `get_read_cuts` produces. The PAF stitching path uses it to resolve a
+/// window's two edges independently, each from a *different* chained record's
+/// CIGAR — a shape `get_read_cuts` (one CIGAR, both boundaries) does not model.
+/// For extracting a slice from a single alignment, prefer [`get_read_cuts`].
 ///
 /// `ref_target <= align_start` returns `Some(0)` (at or before the alignment
 /// begins). A reference position falling inside a deletion maps to the read
@@ -552,13 +642,28 @@ mod tests {
         assert_eq!(revcomp(&revcomp(seq)), seq);
     }
 
+    /// Reference bases consumed by a CIGAR (M/=/X/D/N), used to derive `align_end`
+    /// from `align_start` so the test helper mirrors how a real caller computes it.
+    fn ref_len(ops: &CigarOps) -> usize {
+        ops.iter()
+            .filter(|op| {
+                matches!(
+                    op.kind,
+                    Kind::Match
+                        | Kind::SequenceMatch
+                        | Kind::SequenceMismatch
+                        | Kind::Deletion
+                        | Kind::Skip
+                )
+            })
+            .map(|op| op.len)
+            .sum()
+    }
+
     fn cuts(cigar: &str, align_start: usize, region_start: usize, region_end: usize) -> ReadCuts {
-        get_read_cuts(
-            &cigar.to_cigar_ops().expect("test CIGAR should be valid"),
-            align_start,
-            region_start,
-            region_end,
-        )
+        let ops = cigar.to_cigar_ops().expect("test CIGAR should be valid");
+        let align_end = align_start + ref_len(&ops);
+        get_read_cuts(&ops, align_start, align_end, region_start, region_end)
     }
 
     // --- pure match ---
@@ -689,36 +794,142 @@ mod tests {
         assert_eq!(c.read_end, 0);
     }
 
-    // --- partial overlap (documents semantics used by reads.rs partial mode) ---
+    // --- partial overlap (align_end clamp returns a real slice, not a sentinel) ---
 
     #[test]
-    fn left_partial_region_end_stored_in_read_start() {
-        // align_start=5 > region_start=1: the region_start trigger never fires.
-        // When ref_pos hits region_end=8, start==0 so the position lands in read_start.
-        // reads.rs partial mode detects this (align_start > region_start) and uses:
-        //   real_start=0, real_end=read_cuts.read_start
+    fn left_partial_starts_at_read_zero() {
+        // align_start=5 > region_start=1: the alignment begins inside the window, so
+        // ref_start clamps to align_start=5 and the extraction starts at read 0.
+        // ref_end reaches region_end=8. This is the case v0.2.0 got wrong (it filed
+        // region_end into read_start and left read_end=0).
         let c = cuts("10M", 5, 1, 8);
-        assert_eq!(c.read_start, 3); // pos when ref_pos first reached region_end=8
-        assert_eq!(c.read_end, 0);
+        assert_eq!(c.read_start, 0);
+        assert_eq!(c.read_end, 3);
+        assert_eq!(c.ref_start, 5);
+        assert_eq!(c.ref_end, 8);
     }
 
     #[test]
-    fn contained_read_both_fields_zero() {
-        // Read (align 10-14) is fully inside region (1-20): neither boundary is hit.
-        // reads.rs partial mode: real_start=0, real_end=i_seq.len()
+    fn contained_read_returns_whole_alignment() {
+        // Read (align 10-15) is fully inside region (1-20): both boundaries clamp to
+        // the alignment span, so the whole read is extracted.
         let c = cuts("5M", 10, 1, 20);
         assert_eq!(c.read_start, 0);
-        assert_eq!(c.read_end, 0);
+        assert_eq!(c.read_end, 5);
+        assert_eq!(c.ref_start, 10);
+        assert_eq!(c.ref_end, 15);
     }
 
     #[test]
-    fn right_partial_read_end_zero() {
-        // Read (align 1-5) spans region_start=3 but ends before region_end=10.
-        // region_start correctly sets read_start; region_end is never reached so read_end stays 0.
-        // reads.rs partial mode: real_start=read_cuts.read_start, real_end=i_seq.len()
+    fn right_partial_ends_at_alignment_end() {
+        // Read (align 1-6) spans region_start=3 but ends before region_end=10.
+        // region_start sets read_start; ref_end clamps to align_end=6 so read_end is
+        // a real offset (v0.2.0 left it at the 0 sentinel).
         let c = cuts("5M", 1, 3, 10);
         assert_eq!(c.read_start, 2);
+        assert_eq!(c.read_end, 5);
+        assert_eq!(c.ref_start, 3);
+        assert_eq!(c.ref_end, 6);
+    }
+
+    // --- boundary-coincidence regression tests (v0.2.0 got these wrong) ---
+    //
+    // These are the cases the `start > 0` sentinel mishandled: a boundary that
+    // coincides exactly with the alignment's own start/end. The `found_start`
+    // flag + op-entry guard fix them. Expected tuples match bladerunner's
+    // (correct) differential column.
+
+    #[test]
+    fn alignment_starts_exactly_at_region_start() {
+        // 400M with align_start == region_start == 1000. True read_start is 0.
+        // v0.2.0 never locked in read_start=0 and returned (400, 0, ...).
+        let c = cuts("400M", 1000, 1000, 1400);
+        assert_eq!(
+            (c.read_start, c.read_end, c.ref_start, c.ref_end),
+            (0, 400, 1000, 1400)
+        );
+    }
+
+    #[test]
+    fn region_end_coincides_with_alignment_end() {
+        // One op spans region_start and ends exactly at region_end (== align_end).
+        // v0.2.0's op-level `== ref_end` shortcut skipped the mid-op region_start
+        // crossing and returned (1000, 0, ...).
+        let c = cuts("1000M", 500, 1000, 1500);
+        assert_eq!(
+            (c.read_start, c.read_end, c.ref_start, c.ref_end),
+            (500, 1000, 1000, 1500)
+        );
+    }
+
+    #[test]
+    fn leading_clip_with_alignment_at_region_start() {
+        // Leading soft-clip, then the alignment begins exactly at region_start.
+        // True read_start is 100 (after the clip). v0.2.0 returned (500, 0, ...).
+        let c = cuts("100S400M", 1000, 1000, 1400);
+        assert_eq!(
+            (c.read_start, c.read_end, c.ref_start, c.ref_end),
+            (100, 500, 1000, 1400)
+        );
+    }
+
+    // --- soft-clip extension fields (ported from bladerunner) ---
+
+    #[test]
+    fn no_softclip_extension_when_alignment_brackets_region() {
+        // 200M3000I200M: a large insertion (the expansion) sits inside the region,
+        // aligned on both sides. No soft-clip extension either way.
+        let c = cuts("200M3000I200M", 800, 1000, 2000);
+        assert!(c.read_end > c.read_start);
+        assert_eq!(c.softclip_lead_start, c.read_start);
+        assert_eq!(c.softclip_trail_end, c.read_end);
+    }
+
+    #[test]
+    fn trailing_softclip_extension_detected() {
+        // 600M400S: alignment ends (ref 1100) before region_end (2000); the trailing
+        // 400S carries expansion that couldn't be placed on the reference.
+        let c = cuts("600M400S", 500, 1000, 2000);
+        assert!(c.read_end > c.read_start);
+        assert_eq!(c.softclip_trail_end, c.read_end + 400);
+        assert_eq!(c.softclip_lead_start, c.read_start);
+    }
+
+    #[test]
+    fn leading_softclip_extension_detected() {
+        // 300S400M: alignment starts (ref 1500) after region_start (1000); the leading
+        // 300S carries expansion to the left of the alignment start.
+        let c = cuts("300S400M", 1500, 1000, 2000);
+        assert!(c.read_end > c.read_start);
+        assert_eq!(c.softclip_lead_start, c.read_start.saturating_sub(300));
+        assert_eq!(c.softclip_trail_end, c.read_end);
+    }
+
+    #[test]
+    fn both_softclip_extensions_detected() {
+        // 200S500M300S: alignment [1200,1700] sits inside region [1000,2000], with
+        // expansion soft-clipped on both ends.
+        let c = cuts("200S500M300S", 1200, 1000, 2000);
+        assert!(c.read_end > c.read_start);
+        assert_eq!(c.softclip_lead_start, c.read_start.saturating_sub(200));
+        assert_eq!(c.softclip_trail_end, c.read_end + 300);
+    }
+
+    #[test]
+    fn alignment_before_region_has_no_extension() {
+        // 100M200S entirely before the region: no extraction, no extension.
+        let c = cuts("100M200S", 500, 1000, 2000);
         assert_eq!(c.read_end, 0);
+        assert_eq!(c.softclip_trail_end, 0);
+    }
+
+    #[test]
+    fn trailing_softclip_extension_survives_padding() {
+        // Same trailing-clip read, but the desired window is padded 5bp on each side
+        // (as a caller applying flanks would pass). The clip is still detected because
+        // the alignment ends before the padded window end.
+        let c = cuts("600M400S", 500, 995, 2005);
+        assert_eq!(c.softclip_trail_end, c.read_end + 400);
     }
 
     // --- read_pos_at_ref ---

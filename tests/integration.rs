@@ -42,7 +42,8 @@ fn to_cigar_ops_trait_accessible_from_crate_root() {
 #[test]
 fn read_cuts_type_accessible() {
     let ops = "10M".to_cigar_ops().unwrap();
-    let _cuts: ReadCuts = get_read_cuts(&ops, 1, 3, 7);
+    // 10M from align_start=1 → align_end (one-past) = 11.
+    let _cuts: ReadCuts = get_read_cuts(&ops, 1, 11, 3, 7);
 }
 
 // --- PafIndex and PafRecord via lib root ---
@@ -128,7 +129,8 @@ fn qscore_below_threshold_detection() {
 #[test]
 fn get_read_cuts_insertion_captured() {
     let ops = "3M5I4M".to_cigar_ops().unwrap();
-    let cuts = get_read_cuts(&ops, 1, 3, 7);
+    // 3M+4M consume 7 ref bases from align_start=1 → align_end (one-past) = 8.
+    let cuts = get_read_cuts(&ops, 1, 8, 3, 7);
     assert_eq!(cuts.read_end - cuts.read_start, 9); // 1M + 5I + 3M
 }
 
