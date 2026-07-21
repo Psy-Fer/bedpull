@@ -7,7 +7,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.3.0] — unreleased
+## [0.3.0] — 2026-07-21
 
 Coordinate-math correctness pass, driven by a differential test against
 [bladerunner](https://github.com/Psy-Fer/bladerunner) and aimed at letting bladerunner link

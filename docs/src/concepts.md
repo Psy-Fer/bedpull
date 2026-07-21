@@ -30,33 +30,39 @@ To include them, you must walk the CIGAR and count read positions and reference 
 
 This is exactly what `get_read_cuts` in `src/utils.rs` does.
 
-## The mixed 0-based / 1-based coordinate convention
+## Coordinate frames
 
-`get_read_cuts` takes three coordinate arguments with different bases:
+`get_read_cuts` takes `align_start`, `align_end`, `region_start`, and `region_end`. It is
+**frame-agnostic**: all four must be in the *same* coordinate frame. The walk is relative —
+`ref_pos` is initialised to `align_start` and advances one step per reference-consuming base — so
+only the *difference* between the boundaries affects the returned read offsets. The returned
+`ref_start`/`ref_end` come back in whatever frame you passed in. `align_end` is **exclusive**:
+one position past the last reference base.
 
-- `align_start`: **1-based**
-- `region_start`: **0-based** (from BED)
-- `region_end`: **0-based** (from BED)
+### How BAM/CRAM mode keeps the frame consistent
 
-This is intentional and non-obvious. Here is why.
+noodles represents BAM/CRAM alignment positions as 1-based `Position` values. `get_bam_reads` /
+`get_cram_reads` pass `alignment_start()` as `align_start` and `alignment_end() + 1` as the
+exclusive `align_end`. The region bounds come from the noodles `Region` built by `read_bed`, which
+stores each BED coordinate shifted by `+1` — a workaround for `Position` being `NonZeroUsize`
+(which cannot represent a BED `start` of `0`). That same `+1` shift puts the region into the same
+1-based frame as the alignment positions, so the walk is internally consistent. Before returning,
+both functions normalise `ref_start`/`ref_end` back to 0-based, so callers — and the
+`|missing_left`/`|missing_right` header suffix — see plain BED coordinates. (Skipping that
+normalisation is what caused the historical `missing_left=1bp`-on-every-read bug.)
 
-### BAM coordinates are 1-based in noodles
-
-The noodles library represents BAM alignment positions as `Position`, which is a 1-based type. When bedpull reads `record.alignment_start()` and converts it with `usize::from(...)`, the result is a 1-based integer. This value is passed directly to `get_read_cuts` as `align_start`.
-
-### BED coordinates are 0-based
-
-The BED format is 0-based, half-open: a BED record with `start=100, end=200` refers to reference bases 100–199 (0-based). bedpull reads BED coordinates directly from the file and passes them to `get_read_cuts` as `region_start` and `region_end`.
-
-### The offset cancels correctly
-
-Inside `get_read_cuts`, the walk begins with `ref_pos = align_start` (1-based). The trigger condition is `ref_pos == region_start` or `ref_pos == region_end` (0-based). These conditions fire when the 1-based running position equals the 0-based BED coordinate. Because BED `start` is 0-based and the alignment start is 1-based, the trigger fires exactly one position earlier in 0-based space than it would if both were 1-based, which is exactly the behaviour needed: BED `start=100` means "the first base of the region is at 0-based position 100", and the 1-based ref_pos of `100` is that same base.
-
-In short: the mixed convention is the natural consequence of BED being 0-based and noodles BAM positions being 1-based, and the arithmetic works out correctly because the two offsets cancel. **Do not normalise `align_start` to 0-based before calling `get_read_cuts`.**
+Do not put `align_start` and the region bounds in different frames — mixing them shifts every
+boundary by one.
 
 ### PAF coordinates
 
-PAF `target_start` is 0-based. However, bedpull passes it to `get_read_cuts` as `align_start` (the 1-based slot). In practice this means the PAF-mode walk starts at one position "before" the true alignment start relative to what the BAM walk does. The PAF integration (`get_paf_reads` in `src/reads.rs`) was developed and validated against the RFC1 test case, and the extracted lengths are correct (`579 bp = 59 ref bp + 520 inserted bp`). The test in `src/main.rs::tests::get_read_cuts_rfc1_captures_insertion` pins this behaviour at the CIGAR-cut level. Any change to the coordinate handling must keep that test passing.
+PAF-mode extraction does **not** go through `get_read_cuts`. Because a single BED window's two
+edges can fall on two *different* chained PAF records, `get_paf_reads` resolves each edge
+independently with `read_pos_at_ref`, a single-boundary reference→read mapper. PAF `target_start`
+is 0-based and is used consistently with 0-based region bounds throughout that path. It is
+validated against the RFC1 test case (`579 bp = 59 ref bp + 520 inserted bp`):
+`src/main.rs::tests::get_read_cuts_rfc1_captures_insertion` pins the CIGAR-cut math and the
+`get_paf_reads` tests in `src/reads.rs` pin the end-to-end extraction.
 
 Note that the CIGAR-cut math and the final extracted FASTA sequence are two separate steps:
 `get_paf_reads` converts the 0-based half-open cut coordinates into query-contig coordinates and
@@ -68,23 +74,32 @@ silently shifts the extracted sequence by one base without changing the *reporte
 
 Soft-clipped bases (`S`) are present in the read sequence but are not aligned to the reference. Like insertions, they advance the read position without advancing the reference position. `get_read_cuts` handles them the same way as `I` operations, so soft-clipped bases at the start of a read shift the read-position cursor before the first aligned base.
 
+`ReadCuts` also reports `softclip_lead_start` and `softclip_trail_end` — the read offsets of any leading/trailing soft-clip runs. A caller can use these to optionally extend an extraction into clipped "expansion" sequence that sits just outside the aligned window (bladerunner uses this for flanking-expansion detection). When there is no such extension they equal `read_start`/`read_end` respectively.
+
 ## Partial overlaps
 
-When a read's alignment starts after `region_start`, the `region_start` trigger in `get_read_cuts` never fires (because `ref_pos` is initialised to `align_start`, which is already past `region_start`). If `region_end` is subsequently reached, the position is stored in `read_start` (because `start == 0` at that point, indicating the start sentinel has not been set). `read_end` remains `0`.
+`get_read_cuts` clamps its fire-on boundaries to the alignment's own span:
+`ref_start = max(region_start, align_start)` and `ref_end = min(region_end, align_end)`. A read
+that only partially overlaps the window therefore still produces a real slice — `ref_start` /
+`ref_end` report the covered sub-span — instead of a sentinel. `read_end == 0` now means exactly
+one thing: the alignment never reached the window at all.
 
-`resolve_cuts` in `src/reads.rs` (a private helper shared by `get_bam_reads` and
-`get_cram_reads`) detects this sentinel pattern when `BamConfig::partial` is `true` and remaps
-the fields into the actual `(read_start, read_end, ref_start, ref_end)` covered by the returned
-slice:
+The start boundary is tracked with an explicit `found_start` flag (not a `start > 0` sentinel) and
+is recorded at op entry when `ref_pos == ref_start`. This is what makes `read_start == 0` a valid
+result: a read whose alignment begins exactly at the window start correctly yields `read_start = 0`
+instead of being dropped (the boundary-coincidence bug fixed in 0.3.0).
 
-- If `align_start > region_start` (left-partial or contained): the read is extracted from position `0` to `read_cuts.read_start` (where the `region_end` was reached).
-- If `read_cuts.read_end == 0` and partial mode is on (right-partial): the read is extracted from `read_cuts.read_start` to the end of the read.
-- If `read_cuts.read_end == 0` and partial mode is off: the read is skipped.
+`resolve_cuts` in `src/reads.rs` (a private helper shared by `get_bam_reads` and `get_cram_reads`)
+then applies the spanning policy:
 
-The corrected `ref_start`/`ref_end` this produces are what drive the `missing_left=Nbp` /
-`missing_right=Nbp` header annotations for `--partial` reads that don't fully cover the
-requested window.
+- `read_end == 0` (no overlap): the read is skipped.
+- Non-partial mode and the alignment does not fully cover the region (i.e.
+  `align_start <= region_start && align_end >= region_end` is false): the read is skipped.
+- Otherwise: the clamped `(read_start, read_end, ref_start, ref_end)` is returned unchanged.
 
-The unit tests for `get_read_cuts`'s underlying cut semantics are in `src/utils.rs` under the
-`// --- partial overlap ---` section; the tests for `resolve_cuts`'s field-remapping on top of
-that are in `src/reads.rs` (`resolve_cuts_*`).
+The resulting `ref_start`/`ref_end` (normalised to 0-based) drive the `missing_left=Nbp` /
+`missing_right=Nbp` header annotations for `--partial` reads that don't fully cover the requested
+window.
+
+The unit tests for `get_read_cuts`'s cut semantics are in `src/utils.rs`; the tests for
+`resolve_cuts`'s spanning policy are in `src/reads.rs` (`resolve_cuts_*`).
