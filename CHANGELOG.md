@@ -22,6 +22,12 @@ Coordinate-math correctness pass, driven by a differential test against
   skips a mid-op `ref_start` crossing. This affected BAM/CRAM extraction (the PAF path already
   routed around it via `read_pos_at_ref`).
 
+- **Spurious `missing_left=1bp` on fully-spanning BAM/CRAM reads** — `get_bam_reads` /
+  `get_cram_reads` returned `ref_start`/`ref_end` in the 1-based CIGAR-walk frame while the
+  header suffix compared them against 0-based BED coordinates, so every spanning read was
+  mislabelled as missing 1bp on the left. The returned coordinates are now normalised to
+  0-based (a pre-existing bug, also present in v0.2.0; extraction/sequences were never affected).
+
 ### Changed
 
 - **`get_read_cuts` signature** is now

@@ -238,6 +238,30 @@ fn bam_mode_flanks_extend_extracted_sequence() {
     );
 }
 
+#[test]
+fn bam_mode_spanning_reads_report_zero_based_region_coverage() {
+    // Regression: a fully-spanning read must report ref_start/ref_end equal to the
+    // 0-based BED region bounds — not shifted by 1. Built via read_bed (the +1-shifted
+    // path the CLI uses) so it exercises the exact frame the `missing_left=1bp` bug hit.
+    let bed = temp_bed("chr4\t39318077\t39318136\tRFC1\n");
+    let regions = read_bed(bed.path(), false).unwrap();
+    let (region, _name, _chr) = &regions[0];
+
+    let bam_path = Path::new("examples/rfc1_test.bam");
+    let (mut reader, header, _r) = bam_query(bam_path, "chr4:39318077-39318136");
+    let query = reader.query(&header, region).expect("BAM query failed");
+    let (reads, _) =
+        bedpull::get_bam_reads(&BamConfig::default(), query, region, 0, 0).expect("get_bam_reads");
+
+    assert!(!reads.is_empty());
+    // Every spanning read covers the whole region, so ref_start == 39318077 (0-based BED
+    // start) and ref_end == 39318136 (0-based BED end) exactly — no off-by-one.
+    for (name, _seq, _qual, ref_start, ref_end, _hap) in &reads {
+        assert_eq!(*ref_start, 39318077, "read {name} ref_start off by one");
+        assert_eq!(*ref_end, 39318136, "read {name} ref_end off by one");
+    }
+}
+
 // --- CRAM mode end-to-end ---
 
 #[test]

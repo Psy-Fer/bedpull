@@ -75,9 +75,9 @@ impl Default for BamConfig {
 /// - `name` — read name from the BAM record.
 /// - `sequence` — the extracted subsequence as raw bytes (ASCII nucleotides).
 /// - `quality_string` — Phred+33 encoded quality string for the extracted slice.
-/// - `ref_start` / `ref_end` — the reference coordinates actually covered by the
-///   extracted slice (may differ from the requested BED coordinates when the alignment
-///   does not perfectly span the region boundary).
+/// - `ref_start` / `ref_end` — the reference coordinates (0-based, matching BED)
+///   actually covered by the extracted slice (may differ from the requested BED
+///   coordinates when the alignment does not perfectly span the region boundary).
 /// - `haplotype` — value of the `HP` aux tag; `0` means the tag was absent (unphased).
 pub type BamRead = (String, Vec<u8>, String, usize, usize, u8);
 
@@ -542,6 +542,15 @@ where
             .map(|i| i as u8)
             .unwrap_or(0);
 
+        // The CIGAR walk runs in the same 1-based frame as noodles' alignment_start
+        // (and read_bed's +1-shifted region bounds), so ref_start/ref_end come back
+        // 1-based. Callers (and the |missing_left/right header suffix) work in 0-based
+        // BED coordinates, so normalise here — otherwise every fully-spanning read is
+        // mislabelled `missing_left=1bp`. Lengths are unchanged, so the coverage check
+        // above is unaffected.
+        let ref_start = ref_start.saturating_sub(1);
+        let ref_end = ref_end.saturating_sub(1);
+
         results.push((name, subseq, subqual, ref_start, ref_end, hap));
     }
 
@@ -672,6 +681,11 @@ pub fn get_cram_reads(
                 }
             })
             .unwrap_or(0);
+
+        // Normalise ref_start/ref_end from the 1-based walk frame to 0-based BED
+        // coordinates, as in get_bam_reads (keeps the |missing_left/right suffix honest).
+        let ref_start = ref_start.saturating_sub(1);
+        let ref_end = ref_end.saturating_sub(1);
 
         results.push((name, subseq, subqual, ref_start, ref_end, hap));
     }
