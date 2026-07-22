@@ -1,6 +1,6 @@
 [package]
 name = "bedpull"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["James M. Ferguson <j.ferguson@garvan.org.au>"]
 repository = "https://github.com/Psy-Fer/bedpull"
@@ -22,7 +22,7 @@ tempfile = "3"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "cargo", "wrap_help"] }
-noodles = { version = "0.110.0", features = ["core", "bgzf", "bam", "sam", "bed", "fasta", "fastq", "cram"] }
+noodles = { version = "0.111.0", features = ["core", "bgzf", "bam", "sam", "bed", "fasta", "fastq", "cram"] }
 itertools = "0.11"
 anyhow = "1.0"
 csv = "1.3"

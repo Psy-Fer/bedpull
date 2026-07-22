@@ -854,10 +854,33 @@ mod tests {
 
     #[test]
     fn get_read_cuts_rfc1_captures_insertion() {
+        use noodles::sam::alignment::record::cigar::op::Kind;
         let r = read_paf_record_at_offset(PAF_PATH, 0).unwrap();
         let cigar_str = r.cigar.as_deref().expect("no CIGAR");
         let ops = cigar_str.to_cigar_ops().expect("valid CIGAR from PAF file");
-        let cuts = get_read_cuts(&ops, RFC1_TARGET_START, RFC1_REGION_START, RFC1_REGION_END);
+        // align_end = target_start + reference bases consumed (M/=/X/D/N).
+        let ref_len: usize = ops
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op.kind,
+                    Kind::Match
+                        | Kind::SequenceMatch
+                        | Kind::SequenceMismatch
+                        | Kind::Deletion
+                        | Kind::Skip
+                )
+            })
+            .map(|op| op.len)
+            .sum();
+        let align_end = RFC1_TARGET_START + ref_len;
+        let cuts = get_read_cuts(
+            &ops,
+            RFC1_TARGET_START,
+            align_end,
+            RFC1_REGION_START,
+            RFC1_REGION_END,
+        );
         let extracted_len = cuts.read_end - cuts.read_start;
         assert_eq!(
             extracted_len, RFC1_EXPECTED_BP,

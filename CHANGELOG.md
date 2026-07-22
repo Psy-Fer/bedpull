@@ -7,6 +7,46 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.3.0] — 2026-07-21
+
+Coordinate-math correctness pass, driven by a differential test against
+[bladerunner](https://github.com/Psy-Fer/bladerunner) and aimed at letting bladerunner link
+`bedpull` as a library.
+
+### Fixed
+
+- **Boundary-coincidence bug in `get_read_cuts`** — a read whose alignment began (or ended)
+  exactly at a region boundary was mis-sliced or silently dropped. The `start > 0` sentinel
+  conflated "start not found yet" with "start found at read offset 0". Replaced with an explicit
+  `found_start` flag plus an op-entry guard, and the op-level `== ref_end` shortcut no longer
+  skips a mid-op `ref_start` crossing. This affected BAM/CRAM extraction (the PAF path already
+  routed around it via `read_pos_at_ref`).
+
+- **Spurious `missing_left=1bp` on fully-spanning BAM/CRAM reads** — `get_bam_reads` /
+  `get_cram_reads` returned `ref_start`/`ref_end` in the 1-based CIGAR-walk frame while the
+  header suffix compared them against 0-based BED coordinates, so every spanning read was
+  mislabelled as missing 1bp on the left. The returned coordinates are now normalised to
+  0-based (a pre-existing bug, also present in v0.2.0; extraction/sequences were never affected).
+
+### Changed
+
+- **`get_read_cuts` signature** is now
+  `get_read_cuts(cigar_ops, align_start, align_end, region_start, region_end)`. It takes the
+  alignment end and clamps its fire-on boundaries to the alignment span internally
+  (`ref_start = max(region_start, align_start)`, `ref_end = min(region_end, align_end)`), so a
+  partially-overlapping read yields a real slice instead of a `read_end == 0` sentinel.
+  `region_start`/`region_end` are the desired (flank-expanded) window; the caller no longer
+  pre-clamps. **`align_end` is exclusive (one past the last reference base)** — callers using
+  noodles' inclusive `alignment_end()` must add 1.
+- **`ReadCuts` gains `softclip_lead_start` and `softclip_trail_end`** (read offsets of the
+  leading/trailing soft-clip runs; equal to `read_start`/`read_end` when no extension is
+  available). Layout is now field-identical to bladerunner's `ReadCuts`.
+- **noodles bumped `0.110` → `0.111`** to match bladerunner across the crate boundary.
+
+### Added
+
+- Regression battery for the boundary-coincidence cases and the soft-clip extension fields.
+
 ## [0.2.0] — 2026-07-16
 
 ### Added

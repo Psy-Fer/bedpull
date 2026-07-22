@@ -6,7 +6,7 @@ bedpull is published as a Rust library crate as well as a binary. You can use it
 
 ```toml
 [dependencies]
-bedpull = "0.2"
+bedpull = "0.3"
 ```
 
 ## Import paths
@@ -88,13 +88,22 @@ logic with data from another source.
 use anyhow::Result;
 use bedpull::{ToCigarOps, get_read_cuts};
 
-fn show_cuts(cigar: &str, align_start: usize, region_start: usize, region_end: usize) -> Result<()> {
+fn show_cuts(
+    cigar: &str,
+    align_start: usize,
+    align_end: usize,
+    region_start: usize,
+    region_end: usize,
+) -> Result<()> {
     // Parse a raw CIGAR string from a PAF cg:Z: tag or any str source.
     let ops = cigar.to_cigar_ops()?;
 
-    // align_start is 1-based (as from a BAM record or PAF target_start field).
-    // region_start / region_end are 0-based (as from a BED file).
-    let cuts = get_read_cuts(&ops, align_start, region_start, region_end);
+    // align_start / align_end and region_start / region_end must all be in the same
+    // coordinate frame (the walk is relative). align_end is exclusive — one past the
+    // last reference base. region_start / region_end are the desired window (expand
+    // them yourself if you want flanks); get_read_cuts clamps its fire-on boundaries
+    // to the alignment span internally.
+    let cuts = get_read_cuts(&ops, align_start, align_end, region_start, region_end);
 
     println!(
         "read slice: [{}..{}]  ({} bases)",
@@ -112,12 +121,12 @@ fn show_cuts(cigar: &str, align_start: usize, region_start: usize, region_end: u
 
 fn main() -> Result<()> {
     // A read aligned at ref position 1, with a 5-base insertion inside the region.
-    // CIGAR: 3M5I4M
-    // Region: ref bases 3 to 7 (0-based BED coordinates)
+    // CIGAR: 3M5I4M consumes 7 reference bases, so align_end = 1 + 7 = 8.
+    // Region: ref bases 3 to 7.
     //
     // Expected: the insertion is captured, so the slice is 9 bases
     // (1 match + 5 inserted + 3 match), not 4 reference bases.
-    show_cuts("3M5I4M", 1, 3, 7)?;
+    show_cuts("3M5I4M", 1, 8, 3, 7)?;
     Ok(())
 }
 ```
@@ -138,7 +147,7 @@ cost in PAF-mode extraction once you're processing more than a handful of alignm
 
 ```rust
 use anyhow::Result;
-use bedpull::{PafIndex, get_paf_reads, write_fasta_record};
+use bedpull::{PafIndex, StitchConfig, get_paf_reads, write_fasta_record};
 use noodles::fasta;
 use std::fs::File;
 use std::io::{self, BufReader};
@@ -177,6 +186,7 @@ fn extract_from_paf(
         region_end,
         0, // lflank
         0, // rflank
+        StitchConfig::default(), // no cross-record stitching
         false, // debug
     )?;
 
@@ -197,12 +207,17 @@ and call `get_paf_reads` once per region, exactly what `bedpull`'s own CLI does 
 
 ## Notes on the coordinate convention
 
-`get_read_cuts` uses a **mixed coordinate system** that matches the conventions of its two callers:
+`get_read_cuts` is **frame-agnostic**: `align_start`, `align_end`, `region_start`, and
+`region_end` must all be in the *same* coordinate frame, because the walk is relative
+(`ref_pos` starts at `align_start` and advances). Only the *difference* between the boundaries
+determines the returned read offsets; the returned `ref_start`/`ref_end` inherit whichever frame
+you passed in. `align_end` is **exclusive** (one past the last reference base) — with noodles'
+1-based inclusive `alignment_end()`, add 1.
 
-- `align_start` is **1-based** (noodles `Position` from BAM; PAF `target_start` is 0-based but is used with the CIGAR walk in a way that matches 1-based BAM behaviour; see the [Concepts](concepts.md) chapter for details).
-- `region_start` and `region_end` are **0-based** (directly from BED).
-
-Do not normalise both to the same base before calling `get_read_cuts`. The test suite in `src/utils.rs` documents the exact expected behaviour for all edge cases.
+In BAM/CRAM mode, `get_bam_reads`/`get_cram_reads` supply all four in noodles' 1-based frame and
+then normalise the returned `ref_start`/`ref_end` back to 0-based (BED) before handing them to you.
+See the [Concepts](concepts.md) chapter for the full derivation. The test suite in `src/utils.rs`
+documents the exact expected behaviour for all edge cases.
 
 `extract_from_fasta_coords`/`extract_from_fasta_coords_reader` take `start`/`end` as **0-based
 half-open**, the same convention as everywhere else in the crate, and convert internally to
