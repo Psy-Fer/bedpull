@@ -284,6 +284,7 @@ def main():
     p.add_argument("--pslmap-results", nargs="+", help="one or more pslMap results.tsv (optional extra tool)")
     p.add_argument("--liftover-multiple-results", nargs="+", help="one or more liftOver -multiple + liftOverMerge results.tsv (optional extra tool)")
     p.add_argument("--bedpull-stitch-results", nargs="+", help="one or more bedpull --stitch_records results.tsv (optional extra tool)")
+    p.add_argument("--bcftools-liftover-results", nargs="+", help="one or more bcftools +liftover results.tsv (optional extra tool)")
     p.add_argument("--tolerance-frac", type=float, default=0.05, help="relative length tolerance (default 5%%)")
     p.add_argument("--tolerance-floor", type=float, default=10, help="minimum absolute tolerance in bp (default 10)")
     p.add_argument("--worst-n", type=int, default=20, help="how many worst-offenders to list per tool")
@@ -296,6 +297,7 @@ def main():
     p.add_argument("--neg-pslmap-results", nargs="+", help="pslMap results.tsv for the negative-control windows")
     p.add_argument("--neg-liftover-multiple-results", nargs="+", help="liftOver -multiple + liftOverMerge results.tsv for the negative-control windows")
     p.add_argument("--neg-bedpull-stitch-results", nargs="+", help="bedpull --stitch_records results.tsv for the negative-control windows")
+    p.add_argument("--neg-bcftools-liftover-results", nargs="+", help="bcftools +liftover results.tsv for the negative-control windows")
     p.add_argument("--roc-out", help="output ROC curve plot path; uses kuva if on PATH, else falls back to matplotlib")
     p.add_argument("--roc-data-out", help="output raw (tool, score, label) TSV — kuva/sklearn-ready ROC input")
     args = p.parse_args()
@@ -316,6 +318,7 @@ def main():
         ("pslMap", "pslmap", args.pslmap_results, args.neg_pslmap_results),
         ("liftOver-multiple", "liftovermultiple", args.liftover_multiple_results, args.neg_liftover_multiple_results),
         ("bedpull+stitch", "bedpullstitch", args.bedpull_stitch_results, args.neg_bedpull_stitch_results),
+        ("bcftools+liftover", "bcftoolsliftover", args.bcftools_liftover_results, args.neg_bcftools_liftover_results),
     ]
     for name, key, results, neg_results in extra_tools:
         if results:
@@ -452,7 +455,7 @@ def main():
                     import matplotlib.pyplot as plt
 
                     fig, ax = plt.subplots(figsize=(6, 6))
-                    colors = {"bedpull": "#2b6cb0", "liftOver": "#c05621", "paftools.js": "#2f855a"}
+                    colors = {"bedpull": "#2b6cb0", "liftOver": "#c05621", "paftools.js": "#2f855a", "bcftools+liftover": "#6b46c1"}
                     for tool_name, points in roc_curves.items():
                         tprs = [p[1] for p in points]
                         fprs = [p[2] for p in points]

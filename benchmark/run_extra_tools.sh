@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Orchestrate the four "extra" tool comparisons (paftools.js, pslMap,
-# liftOver -multiple, bedpull+stitch) for either leg, and produce the full
-# 6-tool score_accuracy.py report — the exact commands used to generate the
-# 6-tool tables in README.md, which previously existed only as ad hoc
+# Orchestrate the five "extra" tool comparisons (paftools.js, pslMap,
+# liftOver -multiple, bedpull+stitch, bcftools +liftover) for either leg, and
+# produce the full 7-tool score_accuracy.py report — the exact commands used
+# to generate the multi-tool tables in README.md, which previously existed only as ad hoc
 # one-off commands run by hand during the investigation, not as a single
 # reproducible script (a real gap flagged in an independent pre-release
 # review — see TODO.md's 2026-07-16 entries).
@@ -10,12 +10,15 @@
 # Usage:
 #   run_extra_tools.sh <config.env> <leg> <stage>
 #   leg:   main | confirmation
-#   stage: pslmap | liftover_multiple | bedpull_stitch | paftools | score | all
+#   stage: pslmap | liftover_multiple | bedpull_stitch | paftools | bcftools_liftover | score | all
 #
 # Prerequisites beyond run_all.sh's (see README.md's "Two more UCSC kent
 # tools" / "Optional third tool" sections):
 #   - BEDTOPSL_BIN, PSLMAP_BIN, LIFTOVERMERGE_BIN (UCSC kent tools)
 #   - K8_BIN, PAFTOOLS_JS (k8 + minimap2's misc/paftools.js)
+#   - bcftools >= 1.20 with the 'liftover' plugin on BCFTOOLS_PLUGINS. The
+#     plugin does NOT ship with bcftools — see run_bcftools_liftover_pipeline.sh
+#     for the three-line build from github.com/freeseek/score.
 #   - main leg only: HS1_TO_HG002_PATERNAL_PAF / HS1_TO_HG002_MATERNAL_PAF
 #     (reverse-direction PAFs, target=HG002 haplotype, query=hs1 — built
 #     below if missing, but expensive: ~15-25 min each of whole-genome
@@ -34,7 +37,7 @@ set -euo pipefail
 
 if [ "$#" -ne 3 ]; then
     echo "usage: $(basename "$0") <config.env> <leg: main|confirmation> <stage>" >&2
-    echo "  stages: pslmap | liftover_multiple | bedpull_stitch | paftools | score | all" >&2
+    echo "  stages: pslmap | liftover_multiple | bedpull_stitch | paftools | bcftools_liftover | score | all" >&2
     exit 1
 fi
 
@@ -149,9 +152,26 @@ run_paftools_stage() {
     done
 }
 
+run_bcftools_liftover_stage() {
+    for hap in "${hap_tags[@]}"; do
+        if [ "$leg" = "main" ]; then
+            chain_var="${chain_var_prefix}_${hap}_TO_HS1_CHAIN"
+            chain="${!chain_var}"
+        else
+            chain="$HG38_TO_HS1_CHAIN"
+        fi
+        BCFTOOLS_BIN="$BCFTOOLS_BIN" SAMTOOLS_BIN="$SAMTOOLS_BIN" \
+            bash "$script_dir/run_bcftools_liftover_pipeline.sh" \
+            "$windows" "$chain" "$windows_genome_fasta" "$target_fasta" "$hap" "$outdir/bcftoolslift_${hap}"
+        BCFTOOLS_BIN="$BCFTOOLS_BIN" SAMTOOLS_BIN="$SAMTOOLS_BIN" \
+            bash "$script_dir/run_bcftools_liftover_pipeline.sh" \
+            "$neg_windows" "$chain" "$windows_genome_fasta" "$target_fasta" "$hap" "$outdir/neg_bcftoolslift_${hap}"
+    done
+}
+
 run_score_stage() {
-    bedpull_results=() liftover_results=() paftools_results=() pslmap_results=() liftmulti_results=() bedpullstitch_results=()
-    neg_bedpull_results=() neg_liftover_results=() neg_paftools_results=() neg_pslmap_results=() neg_liftmulti_results=() neg_bedpullstitch_results=()
+    bedpull_results=() liftover_results=() paftools_results=() pslmap_results=() liftmulti_results=() bedpullstitch_results=() bcftoolslift_results=()
+    neg_bedpull_results=() neg_liftover_results=() neg_paftools_results=() neg_pslmap_results=() neg_liftmulti_results=() neg_bedpullstitch_results=() neg_bcftoolslift_results=()
     for hap in "${hap_tags[@]}"; do
         bedpull_results+=("$outdir/bedpull_${hap}.results.tsv")
         liftover_results+=("$outdir/liftover_${hap}.results.tsv")
@@ -159,12 +179,14 @@ run_score_stage() {
         pslmap_results+=("$outdir/pslmap_${hap}.results.tsv")
         liftmulti_results+=("$outdir/liftmulti_${hap}.results.tsv")
         bedpullstitch_results+=("$outdir/bedpullstitch_${hap}.results.tsv")
+        bcftoolslift_results+=("$outdir/bcftoolslift_${hap}.results.tsv")
         neg_bedpull_results+=("$outdir/neg_bedpull_${hap}.results.tsv")
         neg_liftover_results+=("$outdir/neg_liftover_${hap}.results.tsv")
         neg_paftools_results+=("$outdir/neg_paftools_${hap}.results.tsv")
         neg_pslmap_results+=("$outdir/neg_pslmap_${hap}.results.tsv")
         neg_liftmulti_results+=("$outdir/neg_liftmulti_${hap}.results.tsv")
         neg_bedpullstitch_results+=("$outdir/neg_bedpullstitch_${hap}.results.tsv")
+        neg_bcftoolslift_results+=("$outdir/neg_bcftoolslift_${hap}.results.tsv")
     done
 
     if [ "$leg" = "main" ]; then
@@ -185,6 +207,7 @@ run_score_stage() {
         --pslmap-results "${pslmap_results[@]}" \
         --liftover-multiple-results "${liftmulti_results[@]}" \
         --bedpull-stitch-results "${bedpullstitch_results[@]}" \
+        --bcftools-liftover-results "${bcftoolslift_results[@]}" \
         --neg-truth "$neg_truth" \
         --neg-bedpull-results "${neg_bedpull_results[@]}" \
         --neg-liftover-results "${neg_liftover_results[@]}" \
@@ -192,9 +215,10 @@ run_score_stage() {
         --neg-pslmap-results "${neg_pslmap_results[@]}" \
         --neg-liftover-multiple-results "${neg_liftmulti_results[@]}" \
         --neg-bedpull-stitch-results "${neg_bedpullstitch_results[@]}" \
+        --neg-bcftools-liftover-results "${neg_bcftoolslift_results[@]}" \
         --roc-out "$roc" --roc-data-out "$roc_data" \
         --out-report "$report" --out-details "$details"
-    echo "full 6-tool report: $report" >&2
+    echo "full 7-tool report: $report" >&2
 }
 
 case "$stage" in
@@ -202,17 +226,19 @@ pslmap) run_pslmap_stage ;;
 liftover_multiple) run_liftover_multiple_stage ;;
 bedpull_stitch) run_bedpull_stitch_stage ;;
 paftools) run_paftools_stage ;;
+bcftools_liftover) run_bcftools_liftover_stage ;;
 score) run_score_stage ;;
 all)
     run_pslmap_stage
     run_liftover_multiple_stage
     run_bedpull_stitch_stage
     run_paftools_stage
+    run_bcftools_liftover_stage
     run_score_stage
     ;;
 *)
     echo "error: unknown stage '$stage'" >&2
-    echo "  stages: pslmap | liftover_multiple | bedpull_stitch | paftools | score | all" >&2
+    echo "  stages: pslmap | liftover_multiple | bedpull_stitch | paftools | bcftools_liftover | score | all" >&2
     exit 1
     ;;
 esac

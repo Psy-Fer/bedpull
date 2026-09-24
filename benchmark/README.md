@@ -2,7 +2,10 @@
 
 Compares bedpull's CIGAR-aware `--paf` extraction against `liftOver` +
 `samtools faidx` (the standard coordinate-lift-then-extract pipeline) on real
-structural variants, using the GIAB HG002 v5.0q SV truth set. Three legs:
+structural variants, using the GIAB HG002 v5.0q SV truth set. Five further
+tools are wired in as optional extra comparisons via `run_extra_tools.sh`:
+`paftools.js liftover`, `pslMap`, `liftOver -multiple` + `liftOverMerge`,
+`bedpull --stitch_records`, and `bcftools +liftover`. Three legs:
 
 1. **Accuracy** (the headline result): hs1 (CHM13v2.0) reference, HG002
    T2T-Q100 v1.1 diploid assembly, GIAB SV truth set. Does bedpull recover
@@ -62,6 +65,13 @@ needed). Still need to be installed separately:
   required): <https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/>
   (`hg38ToHs1.over.chain.gz`; UCSC only publishes this direction, which is
   why the confirmation leg lifts hg38 → hs1, not the other way around).
+- **`bcftools` ≥1.20 + the `liftover` plugin** (only if running the optional
+  `bcftools +liftover` comparison). The plugin does *not* ship with bcftools:
+  `git clone https://github.com/freeseek/score`, copy `liftover.c`/`score.h`
+  into the bcftools source's `plugins/`, `make plugins/liftover.so`, then
+  export `BCFTOOLS_PLUGINS` at that directory. Verify with
+  `bcftools plugin -l | grep liftover`. Watch for an older `bcftools` earlier
+  on `PATH` — pin `BCFTOOLS_BIN` if in doubt.
 - **`k8`** (only if running the optional `paftools.js liftover` third-tool
   comparison, see below): grab a release from
   <https://github.com/attractivechaos/k8/releases> (e.g. `k8-1.2.tar.bz2`),
@@ -410,33 +420,141 @@ alignment never captured in the first place, so their gains come purely
 from not throwing away information the chain already contains, not from a
 better or different underlying alignment.
 
-### Reproducing the full 6-tool comparison: `run_extra_tools.sh`
+### `bcftools +liftover`
+
+The strongest comparator in this space, and the one most likely to be asked
+about: [BCFtools/liftover](https://github.com/freeseek/score) (Genovese et
+al., *Bioinformatics* **40**(2), 2024). It is chain-based like liftOver, but
+far more careful — it left-aligns indels against the target reference by
+default, does Needleman-Wunsch realignment where needed, and handles REF/ALT
+swaps and strand flips with proper AC/AF/GT bookkeeping.
+
+**It does not ship with bcftools.** It lives in Genovese's separate `score`
+plugin collection and must be compiled against the bcftools source:
+
+```bash
+git clone https://github.com/freeseek/score
+cp score/liftover.c score/score.h /path/to/bcftools-<version>/plugins/
+cd /path/to/bcftools-<version> && make plugins/liftover.so
+export BCFTOOLS_PLUGINS=/path/to/bcftools-<version>/plugins
+bcftools plugin -l | grep liftover     # verify
+```
+
+Set `BCFTOOLS_BIN` to that same bcftools (≥1.20) and `BCFTOOLS_PLUGINS` in
+`config.env` — a stale `bcftools` earlier on `PATH` is the most likely way
+for this stage to silently use the wrong binary.
+
+```bash
+./run_extra_tools.sh config.env main bcftools_liftover
+```
+
+#### Why the windows are anchored rather than the SV records lifted
+
+This is the one integration decision in this harness that needed real
+thought, so it is worth stating plainly.
+
+`+liftover` is a VCF→VCF tool: it re-expresses a known variant in a new
+coordinate frame and carries REF/ALT across as **payload**. The obvious
+integration — lift the GIAB SV record, read its new POS, rebuild the window
+using the carried ALT length — would therefore reconstruct the answer from
+the allele the tool was handed. `extracted_len` would equal `truth.tsv`'s
+`expected_length` by construction on every successful lift. It would score
+~100% and measure nothing at all.
+
+So instead `+liftover` is asked the same question every other tool here is
+asked: *where do these two reference coordinates land in the target
+assembly?* `make_anchor_vcf.py` emits two single-base anchor records per
+window (its first and last base); `bcftools_lifted_to_bed.py` pairs them
+back into an interval. The lifted interval length is then an emergent
+property of the chain alignment — if the assembly carries a 563bp insertion
+between the anchors the interval comes out 563bp longer, and if the tool
+truncates at a chain boundary it does not. That is precisely the quantity
+liftOver, pslMap and bedpull are already scored on.
+
+This is not an abuse of the tool: `+liftover`'s own internal mechanism is
+anchor-based (hence its `UnmappedAnchor5` / `UnmappedAnchor3` /
+`MismatchAnchors` / `ApartAnchors` reject reasons), so lifting explicit
+anchors exercises the same machinery its indel path uses.
+
+Two further fairness details:
+
+- **`ALT` defaults to `.`** (no alternate allele), set by
+  `BCFTOOLS_LIFTOVER_ALT_STYLE`. An anchor exists to carry a coordinate, not
+  an allele, and the concern was that a concrete ALT base would engage the
+  plugin's allele bookkeeping wherever an anchor lands on a real
+  hs1-vs-HG002 SNV, and could reject it for a reason unrelated to whether
+  the coordinate lifted. `BCFTOOLS_LIFTOVER_ALT_STYLE=snv` is kept so that
+  can be measured rather than asserted — and measured, on the full PATERNAL
+  set, **it barely matters**: both styles lift exactly 21,662 windows and
+  reject exactly 3,303, with only 5 windows (0.02%) differing in
+  coordinates. The `snv` run does report 22 swapped and 175
+  reference-added anchors, so the allele path is genuinely being exercised;
+  it simply does not change the outcome at this scale. `ref-only` remains
+  the default as the cleaner control, not because it rescues the numbers.
+- **Extraction is shared code.** `bcftools_lifted_to_bed.py` deliberately
+  emits liftOver's own output shape (a lifted BED6 plus a `#reason` unmapped
+  report) so the pipeline hands off to `extract_and_score_liftover.py`
+  unchanged. bcftools is therefore measured with *identical* extraction code
+  to liftOver/pslMap/liftOverMerge — same `samtools faidx` batching, same
+  minus-strand handling. Any difference in the numbers is a difference in
+  lifting, not in how we measured it.
+
+`--reject` reasons are preserved verbatim in the `unmapped_reason` column
+(the plugin writes them into the reject VCF's FILTER field:
+`MissingContig`, `UnmappedAnchors`, `UnmappedAnchor5`, `UnmappedAnchor3`,
+`MismatchAnchors`, `ApartAnchors`, `MissingFasta`). Two reasons are ours
+rather than the plugin's and are prefixed `local:` to keep that visible —
+`local:DifferentContigs` (both anchors lifted, to different contigs) and
+`local:NoAnchorRecord`.
+
+#### Cross-validation
+
+On the main leg, 20,471 PATERNAL windows were lifted by both bedpull and
+`+liftover`; **96.6% got byte-identical `contig/start/end`**. That agreement
+is the evidence the anchor pairing is implemented correctly — the residual
+3.4% are genuine tool disagreements (almost all at one boundary), which is
+the signal worth looking at rather than noise to explain away.
+
+#### What it does not measure
+
+Nothing here tests `+liftover`'s allele handling — the swaps, the
+left-alignment, the NW realignment — which is the majority of what the tool
+actually does and does well. That axis needs bedpull to emit VCF before it
+can be compared at all, and it is deliberately out of scope for this
+extraction benchmark. `+liftover` is also structurally unable to play on the
+discovery axis (sequence present in the assembly but absent from any input
+VCF), because there is nothing to lift; that is a category difference, not a
+score.
+
+### Reproducing the full 7-tool comparison: `run_extra_tools.sh`
 
 The pslMap / `liftOver -multiple`+`liftOverMerge` / paftools.js / `bedpull
-+stitch` commands shown above were originally run by hand, one-off, during
++stitch` / `bcftools +liftover` commands shown above were originally run by hand, one-off, during
 the investigation, not reproducible from a single script, a gap flagged by
 an independent pre-release review. `run_extra_tools.sh` now wraps the exact
 commands used to produce every number in the Results sections below:
 
 ```bash
-# stage: pslmap | liftover_multiple | bedpull_stitch | paftools | score | all
+# stage: pslmap | liftover_multiple | bedpull_stitch | paftools | bcftools_liftover | score | all
 ./run_extra_tools.sh config.env main pslmap
 ./run_extra_tools.sh config.env main liftover_multiple
 ./run_extra_tools.sh config.env main bedpull_stitch
-./run_extra_tools.sh config.env main paftools     # ~15-25 min per haplotype, one-time alignment
-./run_extra_tools.sh config.env main score        # regenerates accuracy_report.md / accuracy_details.tsv
+./run_extra_tools.sh config.env main paftools           # ~15-25 min per haplotype, one-time alignment
+./run_extra_tools.sh config.env main bcftools_liftover  # ~40s for all four runs
+./run_extra_tools.sh config.env main score              # regenerates accuracy_report.md / accuracy_details.tsv
 
-./run_extra_tools.sh config.env confirmation all  # same five stages, hg38<->hs1 leg
+./run_extra_tools.sh config.env confirmation all  # same six stages, hg38<->hs1 leg
 ```
 
-`pslmap`/`liftover_multiple`/`bedpull_stitch` are cheap (seconds; they reuse
-the existing chain/PAF); only `paftools` needs a fresh whole-genome asm5
+`pslmap`/`liftover_multiple`/`bedpull_stitch`/`bcftools_liftover` are cheap
+(seconds; they reuse the existing chain/PAF); only `paftools` needs a fresh whole-genome asm5
 alignment, and only for the main leg (the confirmation leg's reverse PAF is
 a one-time prerequisite already covered by that leg's own paftools.js
 section above, expected at `out/hg38/hg38_to_hs1.paf`). Requires the same
 `BEDTOPSL_BIN`/`PSLMAP_BIN`/`LIFTOVERMERGE_BIN`/`K8_BIN`/`PAFTOOLS_JS`
 prerequisites as the sections above, plus `LIFTOVER_BIN` (or `liftOver` on
-`PATH`) for the `liftover_multiple` stage.
+`PATH`) for the `liftover_multiple` stage and `BCFTOOLS_BIN`/`BCFTOOLS_PLUGINS`
+for the `bcftools_liftover` stage.
 
 ## Running the scale leg
 
@@ -460,11 +578,14 @@ reproducible; smaller BEDs are subsets of larger ones) and
 | `run_paftools_pipeline.sh` | Run `paftools.js liftover` (optional extra tool) + batched `samtools faidx`, parse → `results.tsv` |
 | `run_pslmap_pipeline.sh` | Run `bedToPsl` + `pslMap -chainMapFile` (optional extra tool, reuses the existing chain) + batched `samtools faidx`, parse → `results.tsv` |
 | `run_liftover_multiple_pipeline.sh` | Run `liftOver -multiple` + `liftOverMerge` (optional extra tool, reuses the existing chain) + batched `samtools faidx`, parse → `results.tsv` |
+| `run_bcftools_liftover_pipeline.sh` | Run `bcftools +liftover` (optional extra tool, reuses the existing chain) over per-window anchor records + batched `samtools faidx`, parse → `results.tsv` |
 | `parse_paf_results.py` | FASTA + `--unmapped` → results.tsv (called by the bedpull pipeline) |
-| `extract_and_score_liftover.py` | lifted BED + unmapped → results.tsv (called by the liftover, paftools, pslMap, and liftOver-multiple pipelines) |
+| `extract_and_score_liftover.py` | lifted BED + unmapped → results.tsv (called by the liftover, paftools, pslMap, liftOver-multiple, and bcftools +liftover pipelines) |
+| `make_anchor_vcf.py` | `windows.bed` + source FASTA → two single-base anchor VCF records per window (called by the bcftools +liftover pipeline) |
+| `bcftools_lifted_to_bed.py` | `+liftover` lifted/reject VCFs → lifted BED6 + liftOver-style unmapped report (called by the bcftools +liftover pipeline) |
 | `parse_paftools_liftover.py` | Recovers real window names in paftools.js liftover's output (called by the paftools pipeline) |
 | `parse_pslmap_output.py` | Recovers real window names in pslMap's PSL output, keeping only whole-window (not partial-fragment) hits (called by the pslMap pipeline) |
-| `score_accuracy.py` | truth (+ optional negative-control truth) + 2-5 tools' results → markdown report (recall, and precision/F1/ROC if negatives given) + per-window TSV |
+| `score_accuracy.py` | truth (+ optional negative-control truth) + 2-7 tools' results → markdown report (recall, and precision/F1/ROC if negatives given) + per-window TSV |
 | `select_negative_control_windows.py` | Size-matched "no true SV here" windows, for precision/F1/ROC; exclusion positions from either a GIAB VCF (`--vcf`, main leg) or a plain BED (`--exclusion-bed`, confirmation leg) |
 | `generate_random_windows.py` | Seeded synthetic BEDs for the scale leg |
 | `run_scaling_benchmark.sh` | Times both tools across the synthetic BEDs |
@@ -493,6 +614,16 @@ strand`), which is what lets `score_accuracy.py` treat them identically.
   minus-strand test case, and parses liftOver's `#reason` unmapped format.
   Cross-checked: feeding it bedpull's own real output coordinates for RFC1
   gives the same 579bp.
+- `run_bcftools_liftover_pipeline.sh` / `make_anchor_vcf.py` /
+  `bcftools_lifted_to_bed.py`: run end to end against real data (bcftools
+  1.24 + the freeseek/score `liftover` plugin, the paf2chain-built
+  hs1→HG002 chains, both haplotypes, both the 24,965 SV windows and the
+  24,965 negative controls — ~40s for all four runs). Validated two ways:
+  the plugin's reject taxonomy was confirmed by forcing a rejection
+  (reasons arrive in the reject VCF's FILTER column), and of the 20,471
+  PATERNAL windows lifted by both bedpull and `+liftover`, 96.6% have
+  byte-identical `contig/start/end`, which is what confirms the two-anchor
+  pairing is implemented correctly.
 - `score_accuracy.py`: run against real truth-set windows with fabricated
   (but realistic) per-tool results covering pass / wrong-length / unmapped
   cases. Expected-length math, tolerance logic, and report rendering all
@@ -509,20 +640,37 @@ since been run end to end; see Results below.
 
 ## Results (hs1↔HG002 accuracy leg, 24,965 SV windows, both haplotypes)
 
-| | bedpull | bedpull+stitch | liftOver | paftools.js | pslMap | liftOver -multiple |
-|---|---|---|---|---|---|---|
-| Overall recall | 68.1% | **71.6%** | 36.7% | 68.0% | 67.2% | 68.2% |
-| DEL recall | 65.8% | **69.1%** | 5.0% | 65.7% | 64.6% | 65.5% |
-| INS recall | 70.5% | **74.2%** | 69.8% | 70.4% | 69.9% | 70.9% |
-| Recall on SVs ≥5000bp | 91.4% | **92.7%** | 44.3% | 85.2% | 91.4% | 70.4% |
-| Windows with zero output | 1,420 (5.7%) | **196 (0.8%)** | 8,027 (32.2%) | 179 (0.7%) | 3,078 (12.3%) | 252 (1.0%) |
-| Precision (vs 24,965 size-matched negative controls) | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
-| F1 | 0.810 | **0.834** | 0.537 | 0.809 | 0.804 | 0.811 |
-| Detection AUC | 0.919 | **0.974** | 0.596 | 0.969 | 0.850 | 0.966 |
+| | bedpull | bedpull+stitch | bcftools +liftover | liftOver | paftools.js | pslMap | liftOver -multiple |
+|---|---|---|---|---|---|---|---|
+| Overall recall | 68.1% | **71.6%** | 70.5% | 36.7% | 68.0% | 67.2% | 68.2% |
+| DEL recall | 65.8% | **69.1%** | 67.8% | 5.0% | 65.7% | 64.6% | 65.5% |
+| INS recall | 70.5% | **74.2%** | 73.3% | 69.8% | 70.4% | 69.9% | 70.9% |
+| Recall on SVs ≥5000bp | 91.4% | 92.7% (433/467) | **92.9% (434/467)** | 44.3% | 85.2% | 91.4% | 70.4% |
+| Windows with zero output | 1,420 (5.7%) | **196 (0.8%)** | 1,974 (7.9%) | 8,027 (32.2%) | 179 (0.7%) | 3,078 (12.3%) | 252 (1.0%) |
+| Precision (vs 24,965 size-matched negative controls) | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| F1 | 0.810 | **0.834** | 0.827 | 0.537 | 0.809 | 0.804 | 0.811 |
+| Detection AUC | 0.919 | **0.974** | 0.900 | 0.596 | 0.969 | 0.850 | 0.966 |
 
-**`bedpull --stitch_records`** (see `TODO.md` and `docs/src/paf-mode.md`) is now
-the best tool on this leg on *every* metric, including detection AUC: it
-edges out paftools.js there too (0.974 vs 0.969). This is the combined effect
+**`bedpull --stitch_records`** (see `TODO.md` and `docs/src/paf-mode.md`) is
+the best tool on this leg on every metric but one, including detection AUC,
+where it edges out paftools.js (0.974 vs 0.969). The exception is recall on
+SVs ≥5000bp, where `bcftools +liftover` takes it 434/467 to 433/467 — a
+one-window difference, which is a tie in all but the strictest reading, and
+not a result either tool should be described as winning.
+
+`bcftools +liftover` is the strongest of the chain-based tools by a wide
+margin and the runner-up overall (F1 0.827 vs 0.834). It converts most of
+liftOver's deficit on the *same chain file* — 36.7% → 70.5% overall recall,
+and 5.0% → 67.8% on deletions — which is worth stating plainly: the bulk of
+liftOver's poor showing here is liftOver, not the chain. Its remaining gap
+to `bedpull+stitch` is concentrated in yield rather than accuracy: 1,974
+windows (7.9%) produce no output at all, against 196 (0.8%), and every one
+of those rejections is `UnmappedAnchors`. Its lower AUC (0.900) follows
+directly from that — a window with no output cannot score. Note also that
+this leg measures only coordinate lifting; `+liftover`'s allele handling,
+which is most of what it does, is untested here (see the
+"`bcftools +liftover`" section above for why, and for why the windows are
+anchored rather than the SV records lifted). This is the combined effect
 of several changes from the same investigation: cross-record stitching
 itself, plus a real pre-existing bug it surfaced along the way, plus a
 follow-up robustness pass. `get_paf_reads`
